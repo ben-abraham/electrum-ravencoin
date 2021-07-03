@@ -225,12 +225,14 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         self.receive_tab = self.create_receive_tab()
         self.addresses_tab = self.create_addresses_tab()
         self.assets_tab = self.create_assets_tab()
+        self.swaps_tab = self.create_swaps_tab()
         self.utxo_tab = self.create_utxo_tab()
         self.console_tab = self.create_console_tab()
         self.contacts_tab = self.create_contacts_tab()
         # self.channels_tab = self.create_channels_tab()
         tabs.addTab(self.create_history_tab(), read_QIcon("tab_history.png"), _('History'))
         tabs.addTab(self.assets_tab, read_QIcon('tab_assets.png'), _('Assets'))
+        tabs.addTab(self.swaps_tab, read_QIcon('tab_assets.png'), _('Swaps'))
         tabs.addTab(self.send_tab, read_QIcon("tab_send.png"), _('Send'))
         tabs.addTab(self.receive_tab, read_QIcon("tab_receive.png"), _('Receive'))
 
@@ -1561,6 +1563,21 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         tabwidget.addTab(l, "My Assets")
         tabwidget.addTab(create_w, "Create Asset")
         tabwidget.addTab(reissue_w, "Reissue Asset")
+        layout.addWidget(tabwidget, 0, 0)
+        return w
+
+    def create_swaps_tab(self):
+        #from .atomic_swap_list import AtomicSwapList
+        #self.atomic_list = AtomicSwapList(self)
+        from .atomic_swap_execute import AtomicSwapExecute
+        self.atomic_exec = AtomicSwapExecute(self, self.gui_object, self.wallet)
+
+        layout = QGridLayout()
+        w = QWidget()
+        w.setLayout(layout)
+        tabwidget = QTabWidget()
+        #tabwidget.addTab(self.atomic_list, "Created Trades")
+        tabwidget.addTab(self.atomic_exec, "Execute Trades")
         layout.addWidget(tabwidget, 0, 0)
         return w
 

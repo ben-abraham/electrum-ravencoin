@@ -2420,6 +2420,104 @@ class PartialTransaction(Transaction):
             if txin.script_type in ('unknown', 'address'):
                 txin.set_script_type()
 
+class SwapTransaction():
+    in_type: str
+    out_type: str
+    in_quantity: Satoshis
+    out_qunatity: Satoshis
+    trade_type: str
+    out_destination: str
+    signed_partial: Transaction
+
+    def __init__(self):
+        return
+
+    @property
+    def asset(self):
+        return self.in_type if self.trade_type == "sell" else self.out_type
+
+    @property
+    def currency(self):
+        return self.out_type if self.trade_type == "sell" else self.in_type
+
+    @property
+    def quantity(self):
+        return self.in_quantity if self.trade_type == "sell" else self.out_quantity
+
+    @property
+    def total_price(self):
+        return self.out_quantity if self.trade_type == "sell" else self.in_quantity
+
+    @property
+    def unit_price(self):
+        return self.total_price * COIN // self.quantity
+
+    @classmethod
+    async def parse_from_hex(cls, hex, wallet):
+        final = SwapTransaction()
+        final.signed_partial = tx_from_any(hex)
+        if not final.signed_partial:
+            raise BufferError("Invalid Transaction")
+
+        if len(final.signed_partial.inputs()) != 1 or len(final.signed_partial.outputs()) != 1:
+            raise BufferError("Invalid Transaction. Has more than one vin/vout")
+
+        #Mutable tx for the purpose of testing signature
+        tx = PartialTransaction.from_tx(final.signed_partial)
+
+        swap_vin = tx.inputs()[0]
+        swap_vout = tx.outputs()[0]
+
+        swap_vin.combine_with_other_txin(final.signed_partial.inputs()[0])
+
+        #TODO: This doesn't actually check for SINGLE|ANYONECANPAY, since the transaction libraries dont currently parse that.
+        if not swap_vin.is_complete():
+            raise BufferError("Transaction not signed with SINGLE|ANYONECANPAY")
+
+        txid = swap_vin.prevout.txid.hex()
+
+        vin_raw = await wallet.network.get_transaction(txid)
+        if vin_raw:
+            vin_tx = Transaction(vin_raw)
+
+        #If nothing comes back this is likely spent, or a testnet tx on mainnet of vice-versa
+        if not vin_tx:
+            raise BufferError("Unable to find transaction.\nIs this for the correct network?")
+
+        test_vout = vin_tx.outputs()[swap_vin.prevout.out_idx]
+
+        #TODO: This doesn't properly check if the UTXO is spent or not. we need gettxout for that
+        if not test_vout:
+            raise BufferError("Unable to find UTXO, this transaction may have been executed already.")
+
+        src_vout = vin_tx.outputs()[swap_vin.prevout.out_idx]
+        in_asset = src_vout.asset is not None
+        out_asset = swap_vout.asset is not None
+
+        if in_asset and out_asset:
+            final.trade_type = "trade"
+        elif in_asset:
+            final.trade_type = "sell"
+        elif out_asset:
+            final.trade_type = "buy"
+        else:
+            raise BufferError("Uknonwn trade type")
+
+        final.in_type = src_vout.asset if in_asset else "rvn"
+        final.in_quantity = src_vout.value
+        final.out_type = swap_vout.asset if out_asset else "rvn"
+        final.out_quantity = swap_vout.value
+        final.out_destination = swap_vout.address
+
+        print(final.in_quantity)
+        print(final.in_quantity.value)
+
+        return final
+
+    def __repr__(self):
+        return 'Atomic Swap Partial(InType: {}, InQuant: {} OutType: {}, OutQuant: {}. Type: {})'\
+            .format(self.in_type, self.in_quantity, self.out_type, self.out_quantity, self.trade_type)
+
 def pack_bip32_root_fingerprint_and_int_path(xfp: bytes, path: Sequence[int]) -> bytes:
     if len(xfp) != 4:
         raise Exception(f'unexpected xfp length. xfp={xfp}')
