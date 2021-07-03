@@ -2119,13 +2119,13 @@ class PartialTransaction(Transaction):
     def add_inputs(self, inputs: List[PartialTxInput], bip69_sort: bool=True) -> None:
         self._inputs.extend(inputs)
         if bip69_sort:
-        self.BIP69_sort(outputs=False)
+            self.BIP69_sort(outputs=False)
         self.invalidate_ser_cache()
 
     def add_outputs(self, outputs: List[PartialTxOutput], bip69_sort: bool=True) -> None:
         self._outputs.extend(outputs)
         if bip69_sort:
-        self.BIP69_sort(inputs=False)
+            self.BIP69_sort(inputs=False)
         self.invalidate_ser_cache()
 
     def set_rbf(self, rbf: bool) -> None:

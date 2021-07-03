@@ -495,11 +495,10 @@ class CoinChooserRandom(CoinChooserBase):
     def bucket_candidates_any(self, buckets: List[Bucket], needs_more) -> List[List[Bucket]]:
         '''Returns a list of bucket sets.'''
         #If we are good without any modifications return right away
-            if not needs_more([], bucket_value_sum=RavenValue()):
-            print("Works with empty bucket!")
-                return [[]]
+        if not needs_more([], bucket_value_sum=RavenValue()):
+            return [[]]
         elif not buckets:
-                raise NotEnoughFunds()
+            raise NotEnoughFunds()
 
         candidates = set()
 
