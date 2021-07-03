@@ -79,11 +79,12 @@ from electrum.exchange_rate import FxThread
 from electrum.simple_config import SimpleConfig
 from electrum.logging import Logger
 from electrum.lnutil import ln_dummy_address, extract_nodeid, ConnStringFormatError
-from electrum.lnaddr import lndecode, LnDecodeException, LnAddressError
-from .asset_workspace import AssetCreateWorkspace
+from electrum.lnaddr import lndecode, LnDecodeException
+from .asset_workspace import AssetCreateWorkspace, AssetReissueWorkspace
 
 from .exception_window import Exception_Hook
 from .amountedit import AmountEdit, RVNAmountEdit, FreezableLineEdit, FeerateEdit, PayToAmountEdit
+from .messages_list import UpdateDevMessagesThread
 from .qrcodewidget import QRCodeWidget, QRDialog
 from .qrtextedit import ShowQRTextEdit, ScanQRTextEdit
 from .transaction_dialog import show_transaction
@@ -105,6 +106,7 @@ from .confirm_tx_dialog import ConfirmTxDialog
 from .transaction_dialog import PreviewTxDialog
 from .rbf_dialog import BumpFeeDialog, DSCancelDialog
 from ...assets import is_main_asset_name_good, is_sub_asset_name_good, is_unique_asset_name_good
+from .qrreader import scan_qrcode
 
 if TYPE_CHECKING:
     from . import ElectrumGui
@@ -229,6 +231,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         self.utxo_tab = self.create_utxo_tab()
         self.console_tab = self.create_console_tab()
         self.contacts_tab = self.create_contacts_tab()
+        self.messages_tab = self.create_messages_tab()
         # self.channels_tab = self.create_channels_tab()
         tabs.addTab(self.create_history_tab(), read_QIcon("tab_history.png"), _('History'))
         tabs.addTab(self.assets_tab, read_QIcon('tab_assets.png'), _('Assets'))
@@ -236,14 +239,15 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         tabs.addTab(self.send_tab, read_QIcon("tab_send.png"), _('Send'))
         tabs.addTab(self.receive_tab, read_QIcon("tab_receive.png"), _('Receive'))
 
-        def add_optional_tab(tabs, tab, icon, description, name):
+        def add_optional_tab(tabs, tab, icon, description, name, default=False):
             tab.tab_icon = icon
             tab.tab_description = description
             tab.tab_pos = len(tabs)
             tab.tab_name = name
-            if self.config.get('show_{}_tab'.format(name), False):
+            if self.config.get('show_{}_tab'.format(name), default):
                 tabs.addTab(tab, icon, description.replace("&", ""))
 
+        add_optional_tab(tabs, self.messages_tab, read_QIcon("tab_message.png"), _("Messages"), "messages", True)
         add_optional_tab(tabs, self.addresses_tab, read_QIcon("tab_addresses.png"), _("&Addresses"), "addresses")
         # add_optional_tab(tabs, self.channels_tab, read_QIcon("lightning.png"), _("Channels"), "channels")
         add_optional_tab(tabs, self.utxo_tab, read_QIcon("tab_coins.png"), _("Co&ins"), "utxo")
@@ -293,7 +297,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
                          'on_history', 'channel', 'channels_updated',
                          'payment_failed', 'payment_succeeded',
                          'invoice_status', 'request_status', 'ln_gossip_sync_progress',
-                         'cert_mismatch', 'gossip_db_loaded']
+                         'cert_mismatch', 'gossip_db_loaded', 'asset_meta']
             # To avoid leaking references to "self" that prevent the
             # window from being GC-ed when closed, callbacks should be
             # methods of this class only, and specifically not be
@@ -329,6 +333,12 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
             self._update_check_thread = UpdateCheckThread()
             self._update_check_thread.checked.connect(on_version_received)
             self._update_check_thread.start()
+
+        self._dev_notification_thread = None
+        if config.get('get_dev_notifications', True):
+            self._dev_notification_thread = UpdateDevMessagesThread(self)
+            self._dev_notification_thread.start()
+
 
     def setup_exception_hook(self):
         Exception_Hook.maybe_setup(config=self.config,
@@ -497,6 +507,9 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
             self.update_lightning_icon()
         elif event == 'cert_mismatch':
             self.show_cert_mismatch_error()
+        #elif event == 'asset_meta':
+        #    self.reissue_workspace.refresh_owners(True)
+        #    self.create_workspace.refresh_owners(True)
         else:
             self.logger.info(f"unexpected network event: {event} {args}")
 
@@ -751,12 +764,13 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         wallet_menu.addSeparator()
         wallet_menu.addAction(_("Find"), self.toggle_search).setShortcut(QKeySequence("Ctrl+F"))
 
-        def add_toggle_action(view_menu, tab):
-            is_shown = self.config.get('show_{}_tab'.format(tab.tab_name), False)
+        def add_toggle_action(view_menu, tab, default=False):
+            is_shown = self.config.get('show_{}_tab'.format(tab.tab_name), default)
             item_name = (_("Hide") if is_shown else _("Show")) + " " + tab.tab_description
             tab.menu_action = view_menu.addAction(item_name, lambda: self.toggle_tab(tab))
 
         view_menu = menubar.addMenu(_("&View"))
+        add_toggle_action(view_menu, self.messages_tab, True)
         add_toggle_action(view_menu, self.addresses_tab)
         add_toggle_action(view_menu, self.utxo_tab)
         # add_toggle_action(view_menu, self.channels_tab)
@@ -1074,6 +1088,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         self.update_completions()
         self.refresh_send_tab()
         self.create_workspace.refresh_owners()
+        self.reissue_workspace.refresh_owners()
 
     # def create_channels_tab(self):
     #     self.channels_list = ChannelsList(self)
@@ -1313,7 +1328,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
                 if not key:
                     return
                 self.address_list.update()
-        except (InvoiceError, LnAddressError) as e:
+        except InvoiceError as e:
             self.show_error(_('Error creating payment request') + ':\n' + str(e))
             return
 
@@ -1546,6 +1561,12 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         run_hook('create_send_tab', grid)
         return w
 
+    def create_messages_tab(self):
+        from .messages_list import MessageList
+        self.message_list = l = MessageList(self)
+        tab = self.create_list_tab(l)
+        return tab
+
     def create_assets_tab(self):
 
         from .asset_list import AssetList
@@ -1554,7 +1575,8 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         self.create_workspace = create_w = AssetCreateWorkspace(self,
                                                                 self.confirm_asset_creation)
 
-        self.reissue_workspace = reissue_w = QWidget()
+        self.reissue_workspace = reissue_w = AssetReissueWorkspace(self,
+                                                                   self.confirm_asset_reissue)
 
         layout = QGridLayout()
         w = QWidget()
@@ -1582,6 +1604,83 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         layout.addWidget(tabwidget, 0, 0)
         return w
 
+    def confirm_asset_reissue(self):
+        error = self.reissue_workspace.verify_valid()
+
+        if error:
+            self.show_warning(_('Invalid asset metadata:\n'
+                                '{}').format(error))
+            return
+
+        def show_small_association_warning():
+            if self.reissue_workspace.should_warn_associated_data():
+                cb = QCheckBox(_("Don't show this message again."))
+                cb_checked = False
+
+                def on_cb(x):
+                    nonlocal cb_checked
+                    cb_checked = x == Qt.Checked
+
+                cb.stateChanged.connect(on_cb)
+                goto = self.question(_('Your associated data is smalled than the '
+                                       '34 byte size.\n'
+                                       'Double check that you have input the correct '
+                                       'data.\n'
+                                       'If you continue, null bytes will be prepended '
+                                       'to the end of your data to fit this size.\n\n'
+                                       'Is this okay?'),
+                                     title=_('Warning: Small associated data'), checkbox=cb)
+
+                if cb_checked:
+                    self.config.set_key('warn_asset_small_associated', False)
+                if goto:
+                    return True
+                else:
+                    return False
+            else:
+                return True
+
+        def show_non_reissuable_warning():
+            if self.reissue_workspace.should_warn_on_non_reissuable():
+                cb = QCheckBox(_("Don't show this message again."))
+                cb_checked = False
+
+                def on_cb(x):
+                    nonlocal cb_checked
+                    cb_checked = x == Qt.Checked
+
+                cb.stateChanged.connect(on_cb)
+                goto = self.question(_('You will not be able to change '
+                                       'this asset in the future.\n'
+                                       'Are you sure you want to continue?'),
+                                     title=_('Warning: Non reissuable asset'), checkbox=cb)
+
+                if cb_checked:
+                    self.config.set_key('warn_asset_non_reissuable', False)
+                if goto:
+                    return True
+                else:
+                    return False
+            else:
+                return True
+
+        if not show_small_association_warning():
+            return
+
+        if not show_non_reissuable_warning():
+            return
+
+        norm, new, change_addr = self.reissue_workspace.get_output()
+
+        self.pay_onchain_dialog(
+            self.get_coins(asset=self.reissue_workspace.get_owner()),
+            norm,
+            coinbase_outputs=new,
+            # change_addr=change_addr
+        )
+
+        self.reissue_workspace.reset_workspace()
+
     def confirm_asset_creation(self):
 
         error = self.create_workspace.verify_valid()
@@ -1605,7 +1704,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
                                               '34 byte size.\n'
                                               'Double check that you have input the correct '
                                               'data.\n'
-                                              'If you continue, null bytes will be appended '
+                                              'If you continue, null bytes will be prepended '
                                               'to the end of your data to fit this size.\n\n'
                                               'Is this okay?'),
                                             title=_('Warning: Small associated data'), checkbox=cb)
@@ -2002,7 +2101,8 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
             change_addr=change_addr)
 
         output_value = \
-            sum([RavenValue(0, {x.asset: x.value}) if x.asset else RavenValue(x.value) for x in outputs + coinbase_outputs], RavenValue())
+            sum([RavenValue(0, {x.asset: x.value}) if x.asset else RavenValue(x.value) for x in outputs +
+                 (coinbase_outputs if coinbase_outputs else [])], RavenValue())
 
         conf_dlg = ConfirmTxDialog(window=self, make_tx=make_tx, output_value=output_value, is_sweep=is_sweep)
         if conf_dlg.not_enough_funds:
@@ -2208,6 +2308,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
     def lock_amount(self, b: bool) -> None:
         self.amount_e.setFrozen(b)
         self.max_button.setEnabled(not b)
+        self.to_send_combo.setEnabled(not b)
 
     def prepare_for_payment_request(self):
         self.show_send_tab()
@@ -2264,7 +2365,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
     def parse_lightning_invoice(self, invoice):
         """Parse ln invoice, and prepare the send tab for it."""
         try:
-            lnaddr = lndecode(invoice, expected_hrp=constants.net.SEGWIT_HRP)
+            lnaddr = lndecode(invoice)
         except Exception as e:
             raise LnDecodeException(e) from e
         pubkey = bh2u(lnaddr.pubkey.serialize())
@@ -2478,7 +2579,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         d.exec_()
 
     def show_lightning_invoice(self, invoice: LNInvoice):
-        lnaddr = lndecode(invoice.invoice, expected_hrp=constants.net.SEGWIT_HRP)
+        lnaddr = lndecode(invoice.invoice)
         d = WindowModalDialog(self, _("Lightning Invoice"))
         vbox = QVBoxLayout(d)
         grid = QGridLayout()
@@ -2955,7 +3056,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
     @protected
     def do_sign(self, address, message, signature, password):
         address = address.text().strip()
-        message = message.toPlainText().strip()
+        message = message.toPlainText()#.strip()
         if not ravencoin.is_address(address):
             self.show_message(_('Invalid Ravencoin address.'))
             return
@@ -3131,30 +3232,27 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
             return
 
     def read_tx_from_qrcode(self):
-        from electrum import qrscanner
-        try:
-            data = qrscanner.scan_barcode(self.config.get_video_device())
-        except UserFacingException as e:
-            self.show_error(e)
-            return
-        except BaseException as e:
-            self.logger.exception('camera error')
-            self.show_error(repr(e))
-            return
-        if not data:
-            return
-        # if the user scanned a bitcoin URI
-        if data.lower().startswith(BITCOIN_BIP21_URI_SCHEME + ':'):
-            self.pay_to_URI(data)
-            return
-        if data.lower().startswith('channel_backup:'):
-            self.import_channel_backup(data)
-            return
-        # else if the user scanned an offline signed tx
-        tx = self.tx_from_text(data)
-        if not tx:
-            return
-        self.show_transaction(tx)
+        def cb(success: bool, error: str, data):
+            if not success:
+                if error:
+                    self.show_error(error)
+                return
+            if not data:
+                return
+            # if the user scanned a bitcoin URI
+            if data.lower().startswith(BITCOIN_BIP21_URI_SCHEME + ':'):
+                self.pay_to_URI(data)
+                return
+            if data.lower().startswith('channel_backup:'):
+                self.import_channel_backup(data)
+                return
+            # else if the user scanned an offline signed tx
+            tx = self.tx_from_text(data)
+            if not tx:
+                return
+            self.show_transaction(tx)
+
+        scan_qrcode(parent=self.top_level_window(), config=self.config, callback=cb)
 
     def read_tx_from_file(self) -> Optional[Transaction]:
         fileName = getOpenFileName(

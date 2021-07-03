@@ -58,21 +58,23 @@ def history_status(h):
 def asset_status(asset_data: Union[Dict, AssetMeta]):
     if asset_data:
         if isinstance(asset_data, Dict):
+            sat_amount = asset_data['sats_in_circulation']
             div_amt = asset_data['divisions']
             reissuable = False if asset_data['reissuable'] == 0 else True
             has_ipfs = False if asset_data['has_ipfs'] == 0 else True
 
-            h = ''.join([str(div_amt), str(reissuable), str(has_ipfs)])
+            h = ''.join([str(sat_amount), str(div_amt), str(reissuable), str(has_ipfs)])
             if has_ipfs:
                 h += asset_data['ipfs']
 
             status = bh2u(hashlib.sha256(h.encode('ascii')).digest())
         else:
+            sat_amount = asset_data.circulation
             div_amt = asset_data.divisions
             reissuable = asset_data.is_reissuable
             has_ipfs = asset_data.has_ipfs
 
-            h = ''.join([str(div_amt), str(reissuable), str(has_ipfs)])
+            h = ''.join([str(sat_amount), str(div_amt), str(reissuable), str(has_ipfs)])
             if has_ipfs:
                 h += asset_data.ipfs_str
 
@@ -336,7 +338,10 @@ class Synchronizer(SynchronizerBase):
                 if data['name'] != asset:
                     raise SynchronizerFailure(f"Not our asset! {asset} vs {data['name']}")
                 for key, value in meta.items():
-                    if data[key] != value:
+                    if data['type'] == 'r' and key == 'sats_in_circulation':
+                        if data[key] > value:
+                            raise SynchronizerFailure(f"Reissued amount is greater than the total amount: {value}, {data['name']}")
+                    elif data[key] != value:
                         raise SynchronizerFailure(f"Metadata mismatch: {value} vs {data[key]}")
                 return data['type']
 
@@ -360,6 +365,7 @@ class Synchronizer(SynchronizerBase):
                 d = dict()
                 d['reissuable'] = result['reissuable']
                 d['has_ipfs'] = result['has_ipfs']
+                d['sats_in_circulation'] = result['sats_in_circulation']
                 if d['has_ipfs']:
                     d['ipfs'] = result['ipfs']
                 height = source['height']
@@ -376,6 +382,7 @@ class Synchronizer(SynchronizerBase):
                 d['divisions'] = result['divisions']
                 d['reissuable'] = result['reissuable']
                 d['has_ipfs'] = result['has_ipfs']
+                d['sats_in_circulation'] = result['sats_in_circulation']
                 if d['has_ipfs']:
                     d['ipfs'] = result['ipfs']
                 s_type = await request_and_verify_metadata_against(height, txid, idx, d)
@@ -384,10 +391,11 @@ class Synchronizer(SynchronizerBase):
             reis = False if result['reissuable'] == 0 else True
             ipfs = False if result['has_ipfs'] == 0 else True
             data = result['ipfs'] if ipfs else None
+            circulation = result['sats_in_circulation']
 
             assert height != -1
             assert txid_o, asset
-            meta = AssetMeta(asset, ownr, reis, divs, ipfs, data, height, s_type, txid_o, txid_prev_o)
+            meta = AssetMeta(asset, circulation, ownr, reis, divs, ipfs, data, height, s_type, txid_o, txid_prev_o)
 
             self._stale_histories.pop(asset, asyncio.Future()).cancel()
             self.wallet.recieve_asset_callback(asset, meta)

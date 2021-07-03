@@ -318,7 +318,7 @@ class Abstract_Wallet(AddressSynchronizer, ABC):
         new_db = WalletDB(self.db.dump(), manual_upgrades=False)
 
         if self.lnworker:
-            channel_backups = new_db.get_dict('channel_backups')
+            channel_backups = new_db.get_dict('imported_channel_backups')
             for chan_id, chan in self.lnworker.channels.items():
                 channel_backups[chan_id.hex()] = self.lnworker.create_channel_backup(chan_id)
             new_db.put('channels', None)
@@ -1008,8 +1008,8 @@ class Abstract_Wallet(AddressSynchronizer, ABC):
 
         show_fiat = fx and fx.is_enabled() and fx.get_history_config()
         out = []
-        income = 0
-        expenditures = 0
+        income = RavenValue()
+        expenditures = RavenValue()
         capital_gains = Decimal(0)
         fiat_income = Decimal(0)
         fiat_expenditures = Decimal(0)
@@ -1034,14 +1034,14 @@ class Abstract_Wallet(AddressSynchronizer, ABC):
                 item['outputs'] = list(map(lambda x: {'address': x.get_ui_address_str(), 'value': x.value},
                                            tx.outputs()))
             # fixme: use in and out values
-            value = item['bc_value'].value
-            if value < 0:
-                expenditures += -value
+            value = item['bc_value']
+            if value < RavenValue():
+                expenditures -= value
             else:
                 income += value
             # fiat computations
             if show_fiat:
-                fiat_fields = self.get_tx_item_fiat(tx_hash=tx_hash, amount_sat=value, fx=fx, tx_fee=tx_fee)
+                fiat_fields = self.get_tx_item_fiat(tx_hash=tx_hash, amount_sat=value.rvn_value.value, fx=fx, tx_fee=tx_fee)
                 fiat_value = fiat_fields['fiat_value'].value
                 item.update(fiat_fields)
                 if value < 0:
@@ -1091,7 +1091,7 @@ class Abstract_Wallet(AddressSynchronizer, ABC):
                 out = {
                     'date': date,
                     'block_height': height,
-                    'BTC_balance': Satoshis(balance),
+                    'BTC_balance': balance,
                 }
                 if show_fiat:
                     ap = self.acquisition_price(coins, fx.timestamp_rate, fx.ccy)
@@ -1099,15 +1099,15 @@ class Abstract_Wallet(AddressSynchronizer, ABC):
                     out['acquisition_price'] = Fiat(ap, fx.ccy)
                     out['liquidation_price'] = Fiat(lp, fx.ccy)
                     out['unrealized_gains'] = Fiat(lp - ap, fx.ccy)
-                    out['fiat_balance'] = Fiat(fx.historical_value(balance, date), fx.ccy)
+                    out['fiat_balance'] = Fiat(fx.historical_value(balance.rvn_value, date), fx.ccy)
                     out['BTC_fiat_price'] = Fiat(fx.historical_value(COIN, date), fx.ccy)
                 return out
 
             summary_start = summary_point(start_timestamp, start_height, start_balance, start_coins)
             summary_end = summary_point(end_timestamp, end_height, end_balance, end_coins)
             flow = {
-                'BTC_incoming': Satoshis(income),
-                'BTC_outgoing': Satoshis(expenditures)
+                'BTC_incoming': income,
+                'BTC_outgoing': expenditures
             }
             if show_fiat:
                 flow['fiat_currency'] = fx.ccy
@@ -1262,17 +1262,21 @@ class Abstract_Wallet(AddressSynchronizer, ABC):
             # all inputs should be is_mine
             if not all([self.is_mine(self.get_txin_address(txin)) for txin in tx.inputs()]):
                 continue
+            # do not mutate LN funding txs, as that would change their txid
+            if self.is_lightning_funding_tx(txid):
+                continue
+            # tx must have opted-in for RBF (even if local, for consistency)
+            if tx.is_final():
+                continue
             # prefer txns already in mempool (vs local)
             if hist_item.tx_mined_status.height == TX_HEIGHT_LOCAL:
                 candidate = tx
                 continue
-            # tx must have opted-in for RBF
-            if tx.is_final(): continue
             return tx
         return candidate
 
     def get_change_addresses_for_new_transaction(
-            self, preferred_change_addr=None, *, allow_reuse: bool = True,
+            self, preferred_change_addr=None, *, allow_reusing_used_change_addrs: bool = True,
             extra_addresses: int = 0,
     ) -> List[str]:
 
@@ -1286,7 +1290,7 @@ class Abstract_Wallet(AddressSynchronizer, ABC):
                 change_addrs += addrs
             else:
                 # if there are none, take one randomly from the last few
-                if not allow_reuse:
+                if not allow_reusing_used_change_addrs:
                     return []
                 addrs = self.get_change_addresses(slice_start=-self.gap_limit_for_change)
                 change_addrs += [random.choice(addrs)] if addrs else []
@@ -1314,11 +1318,11 @@ class Abstract_Wallet(AddressSynchronizer, ABC):
         return change_addrs[:max_change]
 
     def get_single_change_address_for_new_transaction(
-            self, preferred_change_addr=None, *, allow_reuse: bool = True,
+            self, preferred_change_addr=None, *, allow_reusing_used_change_addrs: bool = True,
     ) -> Optional[str]:
         addrs = self.get_change_addresses_for_new_transaction(
             preferred_change_addr=preferred_change_addr,
-            allow_reuse=allow_reuse,
+            allow_reusing_used_change_addrs=allow_reusing_used_change_addrs,
         )
         if addrs:
             return addrs[0]
@@ -1953,7 +1957,7 @@ class Abstract_Wallet(AddressSynchronizer, ABC):
         if not item:
             raise CannotCPFP(_("Could not find coins for output"))
         inputs = [item]
-        out_address = (self.get_single_change_address_for_new_transaction(allow_reuse=False)
+        out_address = (self.get_single_change_address_for_new_transaction(allow_reusing_used_change_addrs=False)
                        or self.get_unused_address()
                        or address)
         output_value = value - fee
@@ -2386,7 +2390,7 @@ class Abstract_Wallet(AddressSynchronizer, ABC):
     def receive_tx_callback(self, tx_hash, tx, tx_height):
         super().receive_tx_callback(tx_hash, tx, tx_height)
         for txo in tx.outputs():
-            addr = self.get_txout_address(txo)
+            addr = txo.address
             if addr in self.receive_requests:
                 status = self.get_request_status(addr)
                 util.trigger_callback('request_status', self, addr, status)
@@ -2799,6 +2803,7 @@ class Imported_Wallet(Simple_Wallet):
 
     def __init__(self, db, storage, *, config):
         Abstract_Wallet.__init__(self, db, storage, config=config)
+        self.use_change = db.get('use_change', False)
 
     def is_watching_only(self):
         return self.keystore is None
@@ -2841,7 +2846,7 @@ class Imported_Wallet(Simple_Wallet):
         return self.get_addresses()
 
     def get_change_addresses(self, **kwargs):
-        return []
+        return self.get_addresses()
 
     def import_addresses(self, addresses: List[str], *,
                          write_to_disk=True) -> Tuple[List[str], List[Tuple[str, str]]]:
@@ -2908,6 +2913,22 @@ class Imported_Wallet(Simple_Wallet):
                 self.save_keystore()
         self.save_db()
 
+    def get_change_addresses_for_new_transaction(self, *args, **kwargs) -> List[str]:
+        # for an imported wallet, if all "change addresses" are already used,
+        # it is probably better to send change back to the "from address", than to
+        # send it to another random used address and link them together, hence
+        # we force "allow_reusing_used_change_addrs=False"
+        return super().get_change_addresses_for_new_transaction(
+            *args,
+            **{**kwargs, "allow_reusing_used_change_addrs": False},
+        )
+
+    def calc_unused_change_addresses(self) -> Sequence[str]:
+        with self.lock:
+            unused_addrs = [addr for addr in self.get_change_addresses()
+                            if not self.is_used(addr) and not self.is_address_reserved(addr)]
+            return unused_addrs
+
     def is_mine(self, address) -> bool:
         if not address: return False
         return self.db.has_imported_address(address)
@@ -2955,6 +2976,25 @@ class Imported_Wallet(Simple_Wallet):
     def get_txin_type(self, address):
         return self.db.get_imported_address(address).get('type', 'address')
 
+    @profiler
+    def try_detecting_internal_addresses_corruption(self):
+        # we check only a random sample, for performance
+        addresses = self.get_addresses()
+        addresses = random.sample(addresses, min(len(addresses), 10))
+        for addr_found in addresses:
+            self.check_address_for_corruption(addr_found)
+
+    def check_address_for_corruption(self, addr):
+        if addr and self.is_mine(addr):
+            pubkey = self.get_public_key(addr)
+            if not pubkey:
+                return
+            txin_type = self.get_txin_type(addr)
+            if txin_type == 'address':
+                return
+            if addr != bitcoin.pubkey_to_address(txin_type, pubkey):
+                raise InternalAddressCorruption()
+
     def _add_input_sig_info(self, txin, address, *, only_der_suffix):
         if not self.is_mine(address):
             return
@@ -2971,7 +3011,11 @@ class Imported_Wallet(Simple_Wallet):
 
     def pubkeys_to_address(self, pubkeys):
         pubkey = pubkeys[0]
-        for addr in self.db.get_imported_addresses():  # FIXME slow...
+        # FIXME This is slow.
+        #       Ideally we would re-derive the address from the pubkey and the txin_type,
+        #       but we don't know the txin_type, and we only have an addr->txin_type map.
+        #       so instead a linear search of reverse-lookups is done...
+        for addr in self.db.get_imported_addresses():
             if self.db.get_imported_address(addr)['pubkey'] == pubkey:
                 return addr
         return None

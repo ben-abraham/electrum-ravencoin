@@ -32,16 +32,15 @@ from PyQt5.QtWidgets import (QComboBox,  QTabWidget,
                              QVBoxLayout, QGridLayout, QLineEdit,
                              QPushButton, QWidget, QHBoxLayout, QTextEdit)
 
-from electrum.i18n import _
+from electrum.i18n import _, languages
 from electrum import util, coinchooser, paymentrequest
 from electrum.util import base_units_list
+
+from electrum.gui import messages
 
 from .util import (ColorScheme, WindowModalDialog, HelpLabel, Buttons,
                    CloseButton)
 
-from electrum.i18n import languages
-from electrum import qrscanner
-from electrum.gui import messages
 
 if TYPE_CHECKING:
     from electrum.simple_config import SimpleConfig
@@ -219,17 +218,17 @@ class SettingsDialog(WindowModalDialog):
         unit_combo.currentIndexChanged.connect(lambda x: on_unit(x, nz))
         gui_widgets.append((unit_label, unit_combo))
 
-        system_cameras = qrscanner._find_system_cameras()
         qr_combo = QComboBox()
-        qr_combo.addItem("Default","default")
-        for camera, device in system_cameras.items():
-            qr_combo.addItem(camera, device)
-        #combo.addItem("Manually specify a device", config.get("video_device"))
+        qr_combo.addItem("Default", "default")
+        msg = (_("For scanning QR codes.") + "\n"
+               + _("Install the zbar package to enable this."))
+        qr_label = HelpLabel(_('Video Device') + ':', msg)
+        from .qrreader import find_system_cameras
+        system_cameras = find_system_cameras()
+        for cam_desc, cam_path in system_cameras.items():
+            qr_combo.addItem(cam_desc, cam_path)
         index = qr_combo.findData(self.config.get("video_device"))
         qr_combo.setCurrentIndex(index)
-        msg = _("Install the zbar package to enable this.")
-        qr_label = HelpLabel(_('Video Device') + ':', msg)
-        qr_combo.setEnabled(qrscanner.libzbar is not None)
         on_video_device = lambda x: self.config.set_key("video_device", qr_combo.itemData(x), True)
         qr_combo.currentIndexChanged.connect(on_video_device)
         gui_widgets.append((qr_label, qr_combo))
@@ -599,10 +598,24 @@ class SettingsDialog(WindowModalDialog):
 
             self.window.create_workspace.associated_data_interpret_override.setVisible(v == Qt.Checked)
             self.window.create_workspace.asset_addr_w.setVisible(v == Qt.Checked)
-            #self.window.reissue_workspace.associated_data_interpret_override.setVisible(v == Qt.Checked)
+            self.window.reissue_workspace.associated_data_interpret_override.setVisible(v == Qt.Checked)
+            self.window.reissue_workspace.asset_addr_w.setVisible(v == Qt.Checked)
+            self.window.asset_list.update()
 
         advanced_assets_cb.stateChanged.connect(on_set_advanced_assets_cb)
         asset_widgets.append((advanced_assets_cb, None))
+
+        message_widgets = []
+
+        dev_notifications_cb = QCheckBox(_("Enable developer notifications"))
+        dev_notifications_cb.setChecked(self.config.get('get_dev_notifications', True))
+
+        def on_set_dev_notifications_cb(v):
+            self.window.config.set_key('get_dev_notifications', v == Qt.Checked, save=True)
+            self.window.message_list.update()
+
+        dev_notifications_cb.stateChanged.connect(on_set_dev_notifications_cb)
+        message_widgets.append((dev_notifications_cb, None))
 
         tabs_info = [
             (gui_widgets, _('General')),
@@ -610,6 +623,7 @@ class SettingsDialog(WindowModalDialog):
             (tx_widgets, _('Transactions')),
             # (lightning_widgets, _('Lightning')),
             (fiat_widgets, _('Fiat')),
+            (message_widgets, _('Messages')),
             (oa_widgets, _('OpenAlias')),
         ]
         for widgets, name in tabs_info:

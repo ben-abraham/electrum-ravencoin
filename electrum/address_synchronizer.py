@@ -121,6 +121,12 @@ class AddressSynchronizer(Logger):
     def get_assets(self) -> Iterable[str]:
         return self.db.get_assets()
 
+    def get_messages(self) -> Dict:
+        return self.db.get_messages()
+
+    def add_message(self, height, message_data):
+        self.db.add_message(height, message_data)
+
     def get_address_history(self, addr: str) -> Sequence[Tuple[str, int]]:
         """Returns the history for the address, in the format that would be returned by a server.
 
@@ -179,9 +185,6 @@ class AddressSynchronizer(Logger):
             else:
                 return RavenValue(txout.value)
         return None
-
-    def get_txout_address(self, txo: TxOutput) -> Optional[str]:
-        return txo.address
 
     def load_unverified_transactions(self):
         # review transactions that are in the history
@@ -283,7 +286,7 @@ class AddressSynchronizer(Logger):
                 # it could happen that we think tx is unrelated but actually one of the inputs is is_mine.
                 # this is the main motivation for allow_unrelated
                 is_mine = any([self.is_mine(self.get_txin_address(txin)) for txin in tx.inputs()])
-                is_for_me = any([self.is_mine(self.get_txout_address(txo)) for txo in tx.outputs()])
+                is_for_me = any([self.is_mine(txo.address) for txo in tx.outputs()])
                 if not is_mine and not is_for_me:
                     raise UnrelatedTransactionException()
             # Find all conflicting transactions.
@@ -342,7 +345,7 @@ class AddressSynchronizer(Logger):
                 ser = tx_hash + ':%d'%n
                 scripthash = ravencoin.script_to_scripthash(txo.scriptpubkey)
                 self.db.add_prevout_by_scripthash(scripthash, prevout=TxOutpoint.from_str(ser), value=v)
-                addr = self.get_txout_address(txo)
+                addr = txo.address
                 if addr and self.is_mine(addr):
                     for asset in v.assets:
                         if asset not in self.get_assets():
@@ -422,6 +425,7 @@ class AddressSynchronizer(Logger):
 
     def recieve_asset_callback(self, asset: str, meta: AssetMeta):
         self.db.add_asset_meta(asset, meta)
+        util.trigger_callback('asset_meta')
 
     def receive_tx_callback(self, tx_hash: str, tx: Transaction, tx_height: int) -> None:
         self.add_unverified_tx(tx_hash, tx_height)

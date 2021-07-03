@@ -102,7 +102,12 @@ class PayToEdit(CompletionTextEdit, ScanQRTextEdit, Logger):
             raise Exception("expected two comma-separated values: (address, amount)") from None
         scriptpubkey = self.parse_output(x)
         amount = self.parse_amount(y)
-        return PartialTxOutput(scriptpubkey=scriptpubkey, value=amount)
+        asset = self.win.get_asset_from_spend_tab()
+        if asset is not None:
+            script = assets.create_transfer_asset_script(scriptpubkey, asset, amount)
+            return PartialTxOutput(scriptpubkey=script, value=amount, asset=asset)
+        else:
+            return PartialTxOutput(scriptpubkey=scriptpubkey, value=amount)
 
     def parse_output(self, x) -> bytes:
         try:
@@ -209,13 +214,9 @@ class PayToEdit(CompletionTextEdit, ScanQRTextEdit, Logger):
                         idx=i, line_content=line.strip(), exc=e, is_multiline=True))
                     continue
             outputs.append(output)
-            if output.value == '!':
-                is_max = True
-            else:
-                total += output.value
+            total += output.value.value
         if outputs:
             self.win.set_onchain(True)
-
         self.win.max_button.setChecked(is_max)
         self.outputs = outputs
         self.payto_scriptpubkey = None
@@ -269,11 +270,12 @@ class PayToEdit(CompletionTextEdit, ScanQRTextEdit, Logger):
         self.setMaximumHeight(h)
         self.verticalScrollBar().hide()
 
-    def qr_input(self):
-        data = super(PayToEdit,self).qr_input()
-        if data.lower().startswith(BITCOIN_BIP21_URI_SCHEME + ':'):
-            self.win.pay_to_URI(data)
-            # TODO: update fee
+    def qr_input(self, *, callback=None):
+        def _on_qr_success(data):
+            if data.lower().startswith(BITCOIN_BIP21_URI_SCHEME + ':'):
+                self.win.pay_to_URI(data)
+                # TODO: update fee
+        super(PayToEdit, self).qr_input(callback=_on_qr_success)
 
     def resolve(self):
         self.is_alias = False

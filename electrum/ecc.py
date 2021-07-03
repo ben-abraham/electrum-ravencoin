@@ -26,6 +26,7 @@
 import base64
 import hashlib
 import functools
+import traceback
 from typing import Union, Tuple, Optional
 from ctypes import (
     byref, c_byte, c_int, c_uint, c_char_p, c_size_t, c_void_p, create_string_buffer,
