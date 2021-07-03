@@ -1558,6 +1558,7 @@ class Abstract_Wallet(AddressSynchronizer, ABC):
             dust_threshold=self.dust_threshold(),
             asset_divs=asset_divs,
             coinbase_outputs=coinbase_outputs,
+            bip69_sort=False,
             wallet=self)
 
         # Timelock tx to current height.

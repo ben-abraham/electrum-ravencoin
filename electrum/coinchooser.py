@@ -105,7 +105,7 @@ def strip_unneeded(bkts: List[Bucket], needs_more) -> List[Bucket]:
     asset_ptr = {asset: -1 for asset in a}
 
     def get_rvn_bucket_value() -> RavenValue:
-        return bkts_rvn[rvn_ptr].value
+        return RavenValue(0) if len(bkts_rvn) == 0 else bkts_rvn[rvn_ptr].value
 
     def get_asset_bucket_value(asset) -> RavenValue:
         return bkts_asset[asset][asset_ptr[asset]].value
@@ -302,7 +302,7 @@ class CoinChooserBase(Logger):
         return ret_amt
 
     def _change_outputs(self, tx: PartialTransaction, change_addrs, fee_estimator_numchange,
-                        dust_threshold, asset_divs: Dict[str, int], has_return: bool) -> List[PartialTxOutput]:
+                        dust_threshold, asset_divs: Dict[str, int], has_return: bool, bip69_sort:bool=True) -> List[PartialTxOutput]:
         amounts = self._change_amounts(tx, len(change_addrs) - len(asset_divs), fee_estimator_numchange, asset_divs)
         assert all([t[1] >= 0 for t in amounts])
         assert len(change_addrs) >= len(amounts) - (1 if has_return else 0)
@@ -317,14 +317,14 @@ class CoinChooserBase(Logger):
     def _construct_tx_from_selected_buckets(self, *, buckets: Sequence[Bucket],
                                             base_tx: PartialTransaction, change_addrs,
                                             fee_estimator_w, dust_threshold,
-                                            base_weight,
+                                            base_weight, bip69_sort:bool=False,
                                             wallet,
                                             asset_divs: Dict[str, int],
                                             has_return: bool) -> Tuple[PartialTransaction, List[PartialTxOutput]]:
         # make a copy of base_tx so it won't get mutated
         tx = PartialTransaction.from_io(base_tx.inputs()[:], base_tx.outputs()[:], wallet=wallet)
 
-        tx.add_inputs([coin for b in buckets for coin in b.coins])
+        tx.add_inputs([coin for b in buckets for coin in b.coins], bip69_sort=bip69_sort)
         tx_weight = self._get_tx_weight(buckets, base_weight=base_weight)
 
         # change is sent back to sending address unless specified
@@ -348,7 +348,7 @@ class CoinChooserBase(Logger):
                                    fee_estimator_assets(assets))
 
         change = self._change_outputs(tx, change_addrs, fee_estimator_numchange, dust_threshold, asset_divs, has_return)
-        tx.add_outputs(change)
+        tx.add_outputs(change, bip69_sort=bip69_sort)
 
         return tx, change
 
@@ -375,7 +375,7 @@ class CoinChooserBase(Logger):
                 outputs: List[PartialTxOutput], change_addrs: Sequence[str],
                 fee_estimator_vb: Callable, dust_threshold: int,
                 asset_divs: Dict[str, int],
-                wallet,
+                wallet, bip69_sort:bool=True,
                 coinbase_outputs=None) -> PartialTransaction:
         """Select unspent coins to spend to pay outputs.  If the change is
         greater than dust_threshold (after adding the change output to
@@ -461,7 +461,8 @@ class CoinChooserBase(Logger):
                                                             base_weight=base_weight,
                                                             wallet=wallet,
                                                             asset_divs=asset_divs,
-                                                            has_return=has_return)
+                                                            has_return=has_return,
+                                                            bip69_sort=bip69_sort)
 
         # Collect the coins into buckets
         all_buckets = self.bucketize_coins(coins, fee_estimator_vb=fee_estimator_vb)

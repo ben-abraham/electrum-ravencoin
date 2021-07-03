@@ -2089,7 +2089,7 @@ class PartialTransaction(Transaction):
             txout.combine_with_other_txout(other_txout)
         self.invalidate_ser_cache()
 
-    def join_with_other_psbt(self, other_tx: 'PartialTransaction') -> None:
+    def join_with_other_psbt(self, other_tx: 'PartialTransaction', bip69_sort: bool=True) -> None:
         """Adds inputs and outputs from other_tx into this one."""
         if not isinstance(other_tx, PartialTransaction):
             raise Exception('Can only join partial transactions.')
@@ -2105,8 +2105,8 @@ class PartialTransaction(Transaction):
         self.xpubs.update(other_tx.xpubs)
         self._unknown.update(other_tx._unknown)
         # copy and add inputs and outputs
-        self.add_inputs(list(other_tx.inputs()))
-        self.add_outputs(list(other_tx.outputs()))
+        self.add_inputs(list(other_tx.inputs()), bip69_sort=bip69_sort)
+        self.add_outputs(list(other_tx.outputs()), bip69_sort=bip69_sort)
         self.remove_signatures()
         self.invalidate_ser_cache()
 
@@ -2116,13 +2116,15 @@ class PartialTransaction(Transaction):
     def outputs(self) -> Sequence[PartialTxOutput]:
         return self._outputs
 
-    def add_inputs(self, inputs: List[PartialTxInput]) -> None:
+    def add_inputs(self, inputs: List[PartialTxInput], bip69_sort: bool=True) -> None:
         self._inputs.extend(inputs)
+        if bip69_sort:
         self.BIP69_sort(outputs=False)
         self.invalidate_ser_cache()
 
-    def add_outputs(self, outputs: List[PartialTxOutput]) -> None:
+    def add_outputs(self, outputs: List[PartialTxOutput], bip69_sort: bool=True) -> None:
         self._outputs.extend(outputs)
+        if bip69_sort:
         self.BIP69_sort(inputs=False)
         self.invalidate_ser_cache()
 
