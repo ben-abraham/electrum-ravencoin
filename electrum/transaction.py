@@ -2428,6 +2428,10 @@ class SwapTransaction():
     trade_type: str
     out_destination: str
     signed_partial: Transaction
+    
+    swap_input_data: TxOutput
+    swap_input: PartialTxInput
+    swap_output: PartialTxOutput
 
     def __init__(self):
         return
@@ -2452,10 +2456,16 @@ class SwapTransaction():
     def unit_price(self):
         return self.total_price * COIN // self.quantity
 
+    def finalize_transaction(self):
+        print(finalize)
+
     @classmethod
     async def parse_from_hex(cls, hex, wallet):
         final = SwapTransaction()
-        final.signed_partial = tx_from_any(hex)
+        try:
+            final.signed_partial = tx_from_any(hex)
+        except (SerializationError, ValueError):
+            raise BufferError("Invalid transaction format")
         if not final.signed_partial:
             raise BufferError("Invalid Transaction")
 
@@ -2469,6 +2479,9 @@ class SwapTransaction():
         swap_vout = tx.outputs()[0]
 
         swap_vin.combine_with_other_txin(final.signed_partial.inputs()[0])
+
+        final.swap_input = swap_vin
+        final.swap_output = swap_vout
 
         #TODO: This doesn't actually check for SINGLE|ANYONECANPAY, since the transaction libraries dont currently parse that.
         if not swap_vin.is_complete():
@@ -2485,6 +2498,10 @@ class SwapTransaction():
             raise BufferError("Unable to find transaction.\nIs this for the correct network?")
 
         test_vout = vin_tx.outputs()[swap_vin.prevout.out_idx]
+        final.swap_input_data = test_vout
+        
+        swap_vin.block_height = 0 #cheat here to make coin chooser accept this later
+        swap_vin.witness_utxo = test_vout
 
         #TODO: This doesn't properly check if the UTXO is spent or not. we need gettxout for that
         if not test_vout:
@@ -2508,9 +2525,6 @@ class SwapTransaction():
         final.out_type = swap_vout.asset if out_asset else "rvn"
         final.out_quantity = swap_vout.value
         final.out_destination = swap_vout.address
-
-        print(final.in_quantity)
-        print(final.in_quantity.value)
 
         return final
 

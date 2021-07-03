@@ -1483,6 +1483,89 @@ class Abstract_Wallet(AddressSynchronizer, ABC):
         run_hook('make_unsigned_transaction', self, tx)
         return tx
 
+    def make_swap_transaction(
+            self, *,
+            coins: Sequence[PartialTxInput],
+            outputs: List[PartialTxOutput],
+            fee=None,
+            change_addr: str = None,
+            is_sweep=False,
+            rbf=False,
+            coinbase_outputs=None) -> PartialTransaction:
+
+        print("==Make Swap Transaction==")
+        #coins[0] is the counterparties component
+        inputs = [coins[0]]
+        coins = coins[1:] #the rest are the coins we can pick from
+
+        if not coins:  # any bitcoin tx must have at least 1 input by consensus
+            raise NotEnoughFunds()
+
+        # prevent side-effect with '!'
+        outputs = copy.deepcopy(outputs)
+
+        # check outputs
+        i_max = None
+        for i, o in enumerate(outputs):
+            if o.max:
+                if i_max is not None:
+                    raise MultipleSpendMaxTxOutputs()
+                i_max = i
+        if i_max and len(outputs) > 1:
+            raise MultipleSpendMaxTxOutputs()
+
+        if fee is None and self.config.fee_per_kb() is None:
+            raise NoDynamicFeeEstimates()
+
+        for item in coins:
+            self.add_input_info(item)
+
+        assets = set()
+        for utxo in outputs:
+            assets.add(utxo.asset)
+        assets.discard(None)
+        extra_addresses = len(assets)
+
+        # Fee estimator
+        if fee is None:
+            fee_estimator = self.config.estimate_fee
+        elif isinstance(fee, Number):
+            fee_estimator = lambda size: fee
+        elif callable(fee):
+            fee_estimator = fee
+        else:
+            raise Exception(f'Invalid argument fee: {fee}')
+
+        # Let the coin chooser select the coins to spend
+        coin_chooser = coinchooser.get_coin_chooser(self.config)
+        
+        # change address. if empty, coin_chooser will set it
+        change_addrs = self.get_change_addresses_for_new_transaction(change_addr, allow_reuse=False, extra_addresses=extra_addresses)
+
+        asset_divs = {asset: self.get_asset_meta(asset).divisions
+                    for asset in assets}
+
+        print("Pre Make_TX")
+        print(inputs)
+        print(outputs)
+
+        tx = coin_chooser.make_tx(
+            coins=coins,
+            inputs=list(inputs),
+            outputs=list(outputs),
+            change_addrs=change_addrs,
+            fee_estimator_vb=fee_estimator,
+            dust_threshold=self.dust_threshold(),
+            asset_divs=asset_divs,
+            coinbase_outputs=coinbase_outputs,
+            wallet=self)
+
+        # Timelock tx to current height.
+        tx.locktime = get_locktime_for_new_transaction(self.network)
+        tx.add_info_from_wallet(self)
+        run_hook('make_unsigned_transaction', self, tx)
+        return tx
+
     def mktx(self, *,
              outputs: List[PartialTxOutput],
              password=None, fee=None, change_addr=None,

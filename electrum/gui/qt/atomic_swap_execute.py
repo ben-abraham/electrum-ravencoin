@@ -75,6 +75,8 @@ if TYPE_CHECKING:
     from .main_window import ElectrumWindow
 
 class AtomicSwapExecute(QWidget, MessageBoxMixin):
+  parsed_swap: SwapTransaction = None
+  execute_swap_action = pyqtSignal(SwapTransaction)
 
   def __init__(self, parent, gui_object: 'ElectrumGui', wallet: Abstract_Wallet):
     super().__init__(parent)
@@ -169,34 +171,55 @@ class AtomicSwapExecute(QWidget, MessageBoxMixin):
     hbox.addWidget(col_1)
     hbox.addWidget(col_2)
     hbox.addWidget(self.rec_buttons_widget)
+    self.update_form()
 
   def update_form(self):
     loop = asyncio.get_event_loop()
     coro = SwapTransaction.parse_from_hex(self.signed_partial_e.toPlainText(), self.wallet)
     future = asyncio.run_coroutine_threadsafe(coro, loop)
+    result = None
+    error = None
     try:
       result = future.result(timeout=5.0)
-      
-      if result:
-        self.details_valid_l.setText(_("Yes"))
-
-        if result.trade_type == "buy":
-          self.details_order_type_l.setText(_("Buy Order (You are selling)"))
-        elif result.trade_type == "sell":
-          self.details_order_type_l.setText(_("Sell Order (You are buying)"))
-        elif result.trade_type == "trade":
-          self.details_order_type_l.setText(_("Trade Order (You are exchange assets for other assets)"))
-
-        self.details_asset_l.setText("{}x [{}]".format(result.quantity, result.asset))
-        self.details_unit_price_l.setText("{}x [{}] per [{}]"\
-            .format(result.unit_price, result.currency.upper(), result.asset.upper()))
-        self.details_total_price_l.setText("{}x [{}]"\
-            .format(result.total_price, result.currency.upper()))
-      else:
-        self.details_valid_l.setText(_("No"))
+      if not result:
+        error = "Timed out validating partial transaction"
     except BufferError as ex:
-      self.details_valid_l.setText(_("No - {}").format(ex))
-      print(ex)
+      error = ex
+
+    self.execute_swap_button.setEnabled(result is not None)
+    if result:
+      self.details_valid_l.setText(_("Yes"))
+
+      if result.trade_type == "buy":
+        self.details_order_type_l.setText(_("Buy Order (You are selling)"))
+      elif result.trade_type == "sell":
+        self.details_order_type_l.setText(_("Sell Order (You are buying)"))
+      elif result.trade_type == "trade":
+        self.details_order_type_l.setText(_("Trade Order (You are exchange assets for other assets)"))
+
+      self.details_asset_l.setText("{}x [{}]".format(result.quantity, result.asset))
+      self.details_unit_price_l.setText("{}x [{}] per [{}]"\
+          .format(result.unit_price, result.currency.upper(), result.asset.upper()))
+      self.details_total_price_l.setText("{}x [{}]"\
+          .format(result.total_price, result.currency.upper()))
+
+      #Add assets to local cache
+      def test_asset(asset):
+        if asset != "rvn" and asset not in self.wallet.get_assets():
+          print("Adding {} to asset cache".format(asset))
+          self.wallet.add_asset(asset)
+      test_asset(result.in_type)
+      test_asset(result.out_type)
+
+      self.parsed_swap = result
+    else:
+      self.details_valid_l.setText(_("No - {}").format(error) if error else _("No"))
+      self.details_order_type_l.clear()
+      self.details_asset_l.clear()
+      self.details_unit_price_l.clear()
+      self.details_total_price_l.clear()
+
+    
 
   def update_receive_qr(self, *args):
     print("Soemthing!")
@@ -218,4 +241,6 @@ class AtomicSwapExecute(QWidget, MessageBoxMixin):
     print("Clear")
 
   def execute_swap(self, _):
-    print("Execute!")
+    if self.parsed_swap:
+      print("Execute!")
+      self.execute_swap_action.emit(self.parsed_swap)

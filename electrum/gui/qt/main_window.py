@@ -67,7 +67,7 @@ from electrum.util import (format_time,
                            InvoiceError)
 from electrum.invoices import PR_TYPE_ONCHAIN, PR_TYPE_LN, PR_DEFAULT_EXPIRATION_WHEN_CREATING, Invoice
 from electrum.invoices import PR_PAID, PR_FAILED, pr_expiration_values, LNInvoice, OnchainInvoice
-from electrum.transaction import (Transaction, PartialTxInput,
+from electrum.transaction import (Transaction, PartialTxInput, SwapTransaction, TxOutput,
                                   PartialTransaction, PartialTxOutput, RavenValue, script_GetOp)
 from electrum.wallet import (Multisig_Wallet, CannotBumpFee, Abstract_Wallet,
                              sweep_preparations, InternalAddressCorruption,
@@ -1571,6 +1571,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         #self.atomic_list = AtomicSwapList(self)
         from .atomic_swap_execute import AtomicSwapExecute
         self.atomic_exec = AtomicSwapExecute(self, self.gui_object, self.wallet)
+        self.atomic_exec.execute_swap_action.connect(self.do_swap)
 
         layout = QGridLayout()
         w = QWidget()
@@ -1904,6 +1905,13 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
             return
         self.do_pay_invoice(self.pending_invoice)
 
+    def do_swap(self, swap):
+        print(swap)
+        self.pending_swap = swap
+        if not self.pending_swap:
+            return
+        self.do_swap_invoice(self.pending_swap)
+
     def pay_multiple_invoices(self, invoices):
         outputs = []
         for invoice in invoices:
@@ -1920,6 +1928,26 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
             self.pay_onchain_dialog(self.get_coins(asset=a), invoice.outputs)
         else:
             raise Exception('unknown invoice type')
+
+    def do_swap_invoice(self, swap: SwapTransaction):
+        address = self.wallet.get_unused_address()
+        own_out = TxOutput.from_address_and_value(address, swap.in_quantity, None if swap.in_type == "rvn" else swap.in_type)
+
+        inputs = [swap.swap_input]
+        if swap.trade_type == "buy": #They are buying, we provide asset UTXO's
+            #NOTE: this does not give rvn UTXO's to make the output more correct,
+            #So if the rvn provided by the counterparty isn't enough to cover all fees,
+            #this will come back as not enough funds, despit potentially owning rvn to pay
+            inputs += [c for c in self.get_coins(asset=swap.out_type) if len(c.value_sats().assets) != 0]
+        elif swap.trade_type == "sell": #They are selling, we just need to provide RVN for tx+fees
+            inputs += self.get_coins()
+        elif swap.trade_type == "trade": #Trading, need to include asset cost + rvn for fees
+            inputs += self.get_coins(asset=swap.out_type)
+        
+        outputs = [swap.swap_output, PartialTxOutput.from_txout(own_out)]
+        print("Ins: {}, Outs: {}".format(len(inputs), len(outputs)))
+        print(outputs)
+        self.pay_onchain_dialog(inputs, outputs, is_swap=True, coinbase_outputs=[])
 
     def get_coins(self, *, asset: str = None, nonlocal_only=False) -> Sequence[PartialTxInput]:
         coins = self.get_manually_selected_coins()
@@ -1956,12 +1984,16 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
             outputs: List[PartialTxOutput], *,
             external_keypairs=None,
             coinbase_outputs=None,
+            is_swap=False,
             change_addr=None) -> None:
         # trustedcoin requires this
         if run_hook('abort_send', self):
             return
         is_sweep = bool(external_keypairs)
-        make_tx = lambda fee_est: self.wallet.make_unsigned_transaction(
+
+        tx_func =   self.wallet.make_swap_transaction if is_swap else \
+                    self.wallet.make_unsigned_transaction
+        make_tx = lambda fee_est, tx_func=tx_func: tx_func(
             coins=inputs,
             outputs=outputs,
             fee=fee_est,
