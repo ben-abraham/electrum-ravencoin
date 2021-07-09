@@ -537,7 +537,7 @@ class AssetCreateWorkspace(QWidget):
     def refresh_change_addrs(self):
         addrs = self.parent.wallet.get_change_addresses_for_new_transaction(extra_addresses=3)
         if not addrs:
-            addrs = self.parent.wallet.get_change_addresses_for_new_transaction(allow_reuse=True, extra_addresses=3)
+            addrs = self.parent.wallet.get_change_addresses_for_new_transaction(allow_reusing_used_change_addrs=True, extra_addresses=3)
         self.change_addrs = addrs
 
     def verify_valid(self) -> Optional[str]:
@@ -1148,7 +1148,7 @@ class AssetReissueWorkspace(QWidget):
     def refresh_change_addrs(self):
         addrs = self.parent.wallet.get_change_addresses_for_new_transaction(extra_addresses=3)
         if not addrs:
-            addrs = self.parent.wallet.get_change_addresses_for_new_transaction(allow_reuse=True, extra_addresses=3)
+            addrs = self.parent.wallet.get_change_addresses_for_new_transaction(allow_reusing_used_change_addrs=True, extra_addresses=3)
         self.change_addrs = addrs
 
     def verify_valid(self) -> Optional[str]:
