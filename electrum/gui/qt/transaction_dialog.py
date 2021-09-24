@@ -40,7 +40,7 @@ import qrcode
 from qrcode import exceptions
 
 from electrum.simple_config import SimpleConfig
-from electrum.util import quantize_feerate
+from electrum.util import quantize_feerate, convert_bytes_to_ascii_safe
 from electrum.ravencoin import base_encode, NLOCKTIME_BLOCKHEIGHT_MAX
 from electrum.i18n import _
 from electrum.plugin import run_hook
@@ -95,7 +95,7 @@ def show_transaction(tx: Transaction, *, parent: 'ElectrumWindow', desc=None, pr
 
 class BaseTxDialog(QDialog, MessageBoxMixin):
 
-    def __init__(self, *, parent: 'ElectrumWindow', desc, prompt_if_unsaved, finalized: bool, external_keypairs=None):
+    def __init__(self, *, parent: 'ElectrumWindow', desc, prompt_if_unsaved, finalized: bool, external_keypairs=None, mixed=False):
         '''Transactions in the wallet will show their description.
         Pass desc to give a description for txs not yet in the wallet.
         '''
@@ -103,6 +103,7 @@ class BaseTxDialog(QDialog, MessageBoxMixin):
         QDialog.__init__(self, parent=None)
         self.tx = None  # type: Optional[Transaction]
         self.external_keypairs = external_keypairs
+        self.mixed = mixed
         self.finalized = finalized
         self.main_window = parent
         self.config = parent.config
@@ -110,7 +111,8 @@ class BaseTxDialog(QDialog, MessageBoxMixin):
         self.prompt_if_unsaved = prompt_if_unsaved
         self.saved = False
         self.desc = desc
-        self.setMinimumWidth(1200)
+        self.setMinimumWidth(640)
+        self.resize(1200,600)
         self.set_title()
 
         self.psbt_only_widgets = []  # type: List[QWidget]
@@ -332,7 +334,7 @@ class BaseTxDialog(QDialog, MessageBoxMixin):
 
         self.sign_button.setDisabled(True)
         self.main_window.push_top_level_window(self)
-        self.main_window.sign_tx(self.tx, callback=sign_done, external_keypairs=self.external_keypairs)
+        self.main_window.sign_tx(self.tx, callback=sign_done, external_keypairs=self.external_keypairs, mixed=self.mixed)
 
     def save(self):
         self.main_window.push_top_level_window(self)
@@ -661,11 +663,10 @@ class BaseTxDialog(QDialog, MessageBoxMixin):
                 b = bytes.fromhex(h)
                 start = 2 if b[1] == len(b[2:]) else 1  # First byte is always opcode
                 b = b[start:]
-                b1 = bytearray([byte for byte in b if byte >= 32 and byte != 127 and byte != 255])
-                if b1:
+                if b:
                     cursor.insertBlock()
                     cursor.insertText('ascii: ', ext)
-                    cursor.insertText(b1.decode('ascii'), ext)
+                    cursor.insertText(convert_bytes_to_ascii_safe(b), ext)
 
             cursor.insertBlock()
 
@@ -817,6 +818,7 @@ class PreviewTxDialog(BaseTxDialog, TxEditor):
             external_keypairs,
             window: 'ElectrumWindow',
             output_value: Union[int, str],
+            mixed = False
     ):
         TxEditor.__init__(
             self,
@@ -826,7 +828,7 @@ class PreviewTxDialog(BaseTxDialog, TxEditor):
             output_value=output_value,
         )
         BaseTxDialog.__init__(self, parent=window, desc='', prompt_if_unsaved=False,
-                              finalized=False, external_keypairs=external_keypairs)
+                              finalized=False, external_keypairs=external_keypairs, mixed=mixed)
         BlockingWaitingDialog(window, _("Preparing transaction..."),
                               lambda: self.update_tx(fallback_to_zero_fee=True))
         self.update()

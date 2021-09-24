@@ -1,3 +1,4 @@
+import time
 from abc import abstractmethod
 from enum import IntEnum
 from typing import Dict, List, Optional
@@ -19,9 +20,13 @@ from electrum.assets import is_main_asset_name_good, is_unique_asset_name_good, 
 from electrum.gui.qt.amountedit import FreezableLineEdit
 from electrum.gui.qt.util import ComplexLineEdit, HelpLabel, EnterButton, ColorScheme, ChoicesLayout, HelpButtonURL
 from electrum.i18n import _
+from electrum.logging import get_logger
 from electrum.ravencoin import TOTAL_COIN_SUPPLY_LIMIT_IN_BTC, base_decode, address_to_script, COIN, is_address
 from electrum.transaction import RavenValue, PartialTxOutput, AssetMeta
 from electrum.util import Satoshis, bfh
+
+
+_logger = get_logger(__name__)
 
 
 class InterpretType(IntEnum):
@@ -46,7 +51,7 @@ class AssetCreateWorkspace(QWidget):
         c_grid.setSpacing(4)
 
         self.asset_name = ComplexLineEdit()
-        self.asset_name.lineEdit.setMaxLength(31)
+        self.asset_name.lineEdit.setMaxLength(30)
         self.asset_name.setPrefixStyle(ColorScheme.GRAY.as_stylesheet())
         self.asset_availability_text = QLabel()
         self.asset_availability_text.setAlignment(Qt.AlignCenter)
@@ -90,11 +95,11 @@ class AssetCreateWorkspace(QWidget):
                 self.reissuable.setTristate(False)
                 self.reissue_label.setStyleSheet(ColorScheme.DEFAULT.as_stylesheet())
             if i == 0 or i2 == 0:
-                self.asset_name.lineEdit.setMaxLength(31)
+                self.asset_name.lineEdit.setMaxLength(30)
                 self.asset_name.set_prefix('')
                 return
             text = self.aval_owner_options[i2]
-            self.asset_name.lineEdit.setMaxLength(31 - len(text))
+            self.asset_name.lineEdit.setMaxLength(30 - len(text) - 1)
             if i == 1:
                 self.asset_name.set_prefix(text + '/')
             else:
@@ -111,10 +116,10 @@ class AssetCreateWorkspace(QWidget):
             self.aval_owner_combo.setVisible(i != 0)
             if i == 0 or i2 == 0:
                 self.asset_name.set_prefix('')
-                self.asset_name.lineEdit.setMaxLength(31)
+                self.asset_name.lineEdit.setMaxLength(30)
                 return
             text = self.aval_owner_options[i2]
-            self.asset_name.lineEdit.setMaxLength(31 - len(text))
+            self.asset_name.lineEdit.setMaxLength(30 - len(text) - 1)
             if i == 1:
                 self.asset_name.set_prefix(text + '/')
             else:
@@ -167,7 +172,7 @@ class AssetCreateWorkspace(QWidget):
             if divs == 0:
                 reg = QRegExp('^[1-9][0-9]{1,10}$')
             else:
-                reg = QRegExp('^[1-9][0-9]{1,10}\\.([0-9]{1,' + str(divs) + '})$')
+                reg = QRegExp('^[0-9]{1,11}\\.([0-9]{1,' + str(divs) + '})$')
             validator = QRegExpValidator(reg)
             self.asset_amount.setValidator(validator)
 
@@ -263,7 +268,16 @@ class AssetCreateWorkspace(QWidget):
 
         self.send_asset_address = QLineEdit()
         self.send_asset_address.textChanged.connect(self._check_asset_addr)
-        #self.send_asset_address.setText(self.change_addrs[1])
+
+        if len(self.change_addrs) > 1:
+            self.send_asset_address.setText(self.change_addrs[1])
+        else:
+            async def delayed_address_update():
+                time.sleep(5)
+                self.refresh_change_addrs()
+                self.send_asset_address.setText(self.change_addrs[1])
+
+            self.parent.run_coroutine_from_thread(delayed_address_update())
 
         asset_h = QHBoxLayout()
         asset_h.addWidget(QLabel(_('New asset address:')))
@@ -284,10 +298,8 @@ class AssetCreateWorkspace(QWidget):
         bottom_buttons.addWidget(self.reset_create_b, 1, 3)
 
         top_layout = QHBoxLayout()
-        options_w = QWidget()
-        options_w.setLayout(self.create_options_layout.layout())
-        top_layout.addWidget(options_w)
-        top_layout.addWidget(HelpButtonURL("https://kralverde.github.io/assets/"))
+        top_layout.addLayout(self.create_options_layout.layout())
+        top_layout.addWidget(HelpButtonURL("https://ravencoin.org/assets/"))
 
         widgetA = QWidget()
         widgetA.setLayout(top_layout)
@@ -299,6 +311,7 @@ class AssetCreateWorkspace(QWidget):
         widgetD.setLayout(c_grid_c)
         widgetF = QWidget()
         widgetF.setLayout(bottom_buttons)
+
         create_l = QVBoxLayout()
         create_l.addWidget(widgetA)
         create_l.addWidget(widgetB)
@@ -339,8 +352,8 @@ class AssetCreateWorkspace(QWidget):
             error = is_sub_asset_name_good(name)
         else:
             error = is_unique_asset_name_good(name)
-        if len(pre + name) > 31:
-            error = 'Asset name must be less than 32 characters (Including the parent).'
+        if len(pre + name) > 30:
+            error = 'Asset name must be less than 31 characters (Including the parent).'
         if error:
             self.asset_name_error_message.setText(error)
             return False
@@ -485,6 +498,11 @@ class AssetCreateWorkspace(QWidget):
             self.asset_amount_warning.setText(
                 _('More than the maximum amount ({})').format(TOTAL_COIN_SUPPLY_LIMIT_IN_BTC))
             return False
+        elif v == 0:
+            self.asset_amount_warning.setText(
+                _('The amount cannot be 0.')
+            )
+            return False
         else:
             self.asset_amount_warning.setText('')
             return True
@@ -535,9 +553,20 @@ class AssetCreateWorkspace(QWidget):
             self.aval_owner_combo.model().item(i).setEnabled(False)
 
     def refresh_change_addrs(self):
+        # We just want addresses to send the newly created assets to
+        # Is there a way to improve this?
         addrs = self.parent.wallet.get_change_addresses_for_new_transaction(extra_addresses=3)
         if not addrs:
-            addrs = self.parent.wallet.get_change_addresses_for_new_transaction(allow_reuse=True, extra_addresses=3)
+            addrs = self.parent.wallet.get_change_addresses_for_new_transaction(allow_reusing_used_change_addrs=True, extra_addresses=3)
+        if not addrs:
+            addrs = self.parent.wallet.get_change_addresses(slice_stop=4)
+        if not addrs:
+            addrs = self.parent.wallet.get_receiving_addresses(slice_stop=4)
+        if len(addrs) < 4:
+            assert len(addrs) > 0
+            addr = addrs[0]
+            for _ in range(4 - len(addrs)):
+                addrs.append(addr)
         self.change_addrs = addrs
 
     def verify_valid(self) -> Optional[str]:
@@ -588,7 +617,7 @@ class AssetCreateWorkspace(QWidget):
     def reset_workspace(self):
         self.create_options_layout.group.buttons()[0].setChecked(True)
         self.asset_name.lineEdit.setText('')
-        self.asset_name.lineEdit.setMaxLength(31)
+        self.asset_name.lineEdit.setMaxLength(30)
         self.asset_name.set_prefix('')
         self.divisions.setFrozen(False)
         self.divisions.setText('0')
@@ -718,19 +747,6 @@ class AssetReissueWorkspace(QWidget):
               + _('This lets the asset be edited in the future.')
         self.reissue_label = HelpLabel(_('Reissuable'), msg)
 
-        def update_amount_line_edit():
-            t = self.divisions.text()
-            if not t:
-                return
-            divs = int(t)
-            # Update regex
-            if divs == 0:
-                reg = QRegExp('^[0-9]{1,11}$')
-            else:
-                reg = QRegExp('^[0-9]{1,11}\\.([0-9]{1,' + str(divs) + '})$')
-            validator = QRegExpValidator(reg)
-            self.asset_amount.setValidator(validator)
-
         def on_combo_change():
             i = self.aval_owner_combo.currentIndex()
             if i == 0:
@@ -746,11 +762,17 @@ class AssetReissueWorkspace(QWidget):
                         # invalid options which would be caught in a node broadcast
                         m = await self.parent.network.get_meta_for_asset(asset)
                         if not m:
-                            return
-                        divs = m['divisions']
-                        reis = False if m['reissuable'] == 0 else True
-                        data = m.get('ipfs', None)
-                        circulation = m['sats_in_circulation']
+                            # Dummy data
+                            _logger.warning("Couldn't query asset meta!")
+                            divs = 0
+                            reis = True
+                            data = None
+                            circulation = 0
+                        else:
+                            divs = m['divisions']
+                            reis = False if m['reissuable'] == 0 else True
+                            data = m.get('ipfs', None)
+                            circulation = m['sats_in_circulation']
                         self.current_asset_meta = AssetMeta(asset, circulation, False, reis, divs, bool(data), data, -1, '', None, None)
 
                         r = reis
@@ -785,6 +807,13 @@ class AssetReissueWorkspace(QWidget):
                         self.asset_amount.setText('0')
                         self.current_sats.setText(
                             _("({} {} currently in circulation)").format(Satoshis(circulation), asset))
+
+                        if d == 0:
+                            reg = QRegExp('^[0-9]{1,11}$')
+                        else:
+                            reg = QRegExp('^[0-9]{1,11}\\.([0-9]{1,' + str(d) + '})$')
+                        validator = QRegExpValidator(reg)
+                        self.asset_amount.setValidator(validator)
 
                         if r:
                             self.reissue_label.setStyleSheet(ColorScheme.DEFAULT.as_stylesheet())
@@ -831,6 +860,13 @@ class AssetReissueWorkspace(QWidget):
                 self.asset_amount.setText('0')
                 self.current_sats.setText(_("({} {} currently in circulation)").format(Satoshis(m.circulation), m.name))
 
+                if d == 0:
+                    reg = QRegExp('^[0-9]{1,11}$')
+                else:
+                    reg = QRegExp('^[0-9]{1,11}\\.([0-9]{1,' + str(d) + '})$')
+                validator = QRegExpValidator(reg)
+                self.asset_amount.setValidator(validator)
+
                 if r:
                     self.reissue_label.setStyleSheet(ColorScheme.DEFAULT.as_stylesheet())
                     self.divisions_label.setStyleSheet(ColorScheme.DEFAULT.as_stylesheet())
@@ -850,7 +886,6 @@ class AssetReissueWorkspace(QWidget):
         self.divisions.setText('')
         self.divisions.setFixedWidth(25)
         self.divisions.setFrozen(True)
-        self.divisions.textChanged.connect(update_amount_line_edit)
 
         divisions_grid = QHBoxLayout()
         divisions_grid.setSpacing(0)
@@ -929,6 +964,16 @@ class AssetReissueWorkspace(QWidget):
         self.send_asset_address.textChanged.connect(self._check_asset_addr)
         #self.send_asset_address.setText(self.change_addrs[1])
 
+        if len(self.change_addrs) > 1:
+            self.send_asset_address.setText(self.change_addrs[1])
+        else:
+            async def delayed_address_update():
+                time.sleep(5)
+                self.refresh_change_addrs()
+                self.send_asset_address.setText(self.change_addrs[1])
+
+            self.parent.run_coroutine_from_thread(delayed_address_update())
+
         asset_h = QHBoxLayout()
         asset_h.addWidget(QLabel(_('New asset address:')))
         asset_h.addWidget(self.send_asset_address)
@@ -952,7 +997,7 @@ class AssetReissueWorkspace(QWidget):
 
         top_layout = QHBoxLayout()
         top_layout.addWidget(self.aval_owner_combo)
-        top_layout.addWidget(HelpButtonURL("https://kralverde.github.io/assets/"))
+        top_layout.addWidget(HelpButtonURL("https://ravencoin.org/assets/"))
         widgetA = QWidget()
         widgetA.setLayout(top_layout)
         widgetC = QWidget()
@@ -1126,12 +1171,13 @@ class AssetReissueWorkspace(QWidget):
             meta = self.parent.wallet.get_asset_meta(asset)  # type: AssetMeta
             if not meta:
                 continue
-            if not meta.is_reissuable:
-                disabled_indexes.add(i)
-                new_aval_owner_options[i] = asset + ' (Non-reissuable)'
-            if (asset + '!') in in_mempool:
-                disabled_indexes.add(i)
-                new_aval_owner_options[i] = asset + ' (Mempool)'
+            else:
+                if not meta.is_reissuable:
+                    disabled_indexes.add(i)
+                    new_aval_owner_options[i] = asset + ' (Non-reissuable)'
+                if (asset + '!') in in_mempool:
+                    disabled_indexes.add(i)
+                    new_aval_owner_options[i] = asset + ' (Mempool)'
 
         diff = set(new_aval_owner_options) - set(self.aval_owner_options)
 
@@ -1146,9 +1192,20 @@ class AssetReissueWorkspace(QWidget):
             self.aval_owner_combo.model().item(i).setEnabled(False)
 
     def refresh_change_addrs(self):
+        # We just want addresses to send the newly created assets to
+        # Is there a way to improve this?
         addrs = self.parent.wallet.get_change_addresses_for_new_transaction(extra_addresses=3)
         if not addrs:
-            addrs = self.parent.wallet.get_change_addresses_for_new_transaction(allow_reuse=True, extra_addresses=3)
+            addrs = self.parent.wallet.get_change_addresses_for_new_transaction(allow_reusing_used_change_addrs=True, extra_addresses=3)
+        if not addrs:
+            addrs = self.parent.wallet.get_change_addresses(slice_stop=4)
+        if not addrs:
+            addrs = self.parent.wallet.get_receiving_addresses(slice_stop=4)
+        if len(addrs) < 4:
+            assert len(addrs) > 0
+            addr = addrs[0]
+            for _ in range(4 - len(addrs)):
+                addrs.append(addr)
         self.change_addrs = addrs
 
     def verify_valid(self) -> Optional[str]:

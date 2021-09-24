@@ -448,20 +448,20 @@ class HistoryModel(CustomModel, Logger):
                     asset_name=asset_name,
                     amount=amount,
                     balance=balance,
-                    fiat_value=fiat_value,
-                    fiat_default=fiat_default,
-                    acquisition_price=acqu_price,
-                    fiat_gain=fiat_gain,
+                    fiat_value=None,
+                    fiat_default=None,
+                    acquisition_price=None,
+                    fiat_gain=None,
                     payment_hash=payment_hash,
                     height=height,
                     type=type,
                     channel_id=channel_id,
                     preimage=preimage,
                     fee=fee,
-                    fiat_currency=fiat_currency,
-                    fiat_rate=fiat_rate,
-                    fiat_fee=fiat_fee,
-                    capital_gain=capital_gain
+                    fiat_currency=None,
+                    fiat_rate=None,
+                    fiat_fee=None,
+                    capital_gain=None
                 )
                 self.add_history_node(node_data, parents, tx_item)
 
@@ -882,12 +882,12 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
         grid.addWidget(QLabel(self.format_date(end_date)), 1, 2)
         #
         grid.addWidget(QLabel(_("RVN balance")), 2, 0)
-        grid.addWidget(QLabel(format_amount(start['RVN_balance'])), 2, 1)
-        grid.addWidget(QLabel(format_amount(end['RVN_balance'])), 2, 2)
+        grid.addWidget(QLabel(format_amount(start['BTC_balance'].rvn_value)), 2, 1)
+        grid.addWidget(QLabel(format_amount(end['BTC_balance'].rvn_value)), 2, 2)
         #
         grid.addWidget(QLabel(_("RVN Fiat price")), 3, 0)
-        grid.addWidget(QLabel(format_fiat(start.get('RVN_fiat_price'))), 3, 1)
-        grid.addWidget(QLabel(format_fiat(end.get('RVN_fiat_price'))), 3, 2)
+        grid.addWidget(QLabel(format_fiat(start.get('BTC_fiat_price'))), 3, 1)
+        grid.addWidget(QLabel(format_fiat(end.get('BTC_fiat_price'))), 3, 2)
         #
         grid.addWidget(QLabel(_("Fiat balance")), 4, 0)
         grid.addWidget(QLabel(format_fiat(start.get('fiat_balance'))), 4, 1)
@@ -903,11 +903,11 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
         #
         grid2 = QGridLayout()
         grid2.addWidget(QLabel(_("RVN incoming")), 0, 0)
-        grid2.addWidget(QLabel(format_amount(flow['RVN_incoming'])), 0, 1)
+        grid2.addWidget(QLabel(format_amount(flow['BTC_incoming'].rvn_value)), 0, 1)
         grid2.addWidget(QLabel(_("Fiat incoming")), 1, 0)
         grid2.addWidget(QLabel(format_fiat(flow.get('fiat_incoming'))), 1, 1)
         grid2.addWidget(QLabel(_("RVN outgoing")), 2, 0)
-        grid2.addWidget(QLabel(format_amount(flow['RVN_outgoing'])), 2, 1)
+        grid2.addWidget(QLabel(format_amount(flow['BTC_outgoing'].rvn_value)), 2, 1)
         grid2.addWidget(QLabel(_("Fiat outgoing")), 3, 0)
         grid2.addWidget(QLabel(format_fiat(flow.get('fiat_outgoing'))), 3, 1)
         #
@@ -1037,7 +1037,8 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
                 menu.addAction(_("Increase fee"), lambda: self.parent.bump_fee_dialog(tx))
             else:
                 if tx_details.can_cpfp:
-                    menu.addAction(_("Child pays for parent"), lambda: self.parent.cpfp_dialog(tx))
+                    pass
+                    #menu.addAction(_("Child pays for parent"), lambda: self.parent.cpfp_dialog(tx))
             if tx_details.can_dscancel:
                 menu.addAction(_("Cancel (double-spend)"), lambda: self.parent.dscancel_dialog(tx))
         invoices = self.wallet.get_relevant_invoices_for_tx(tx)
@@ -1108,14 +1109,32 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
         lines = []
         if is_csv:
             for item in txns:
-                lines.append([item['txid'],
-                              item.get('label', ''),
-                              item['confirmations'],
-                              item['bc_value'],
-                              item.get('fiat_value', ''),
-                              item.get('fee', ''),
-                              item.get('fiat_fee', ''),
-                              item['date']])
+                rvn_value = item['bc_value']
+                val = rvn_value.rvn_value
+
+                if val != 0:
+                    lines.append([item['txid'],
+                                  item.get('label', ''),
+                                  item['confirmations'],
+                                  val,
+                                  '',
+                                  item.get('fiat_value', ''),
+                                  item.get('fee', ''),
+                                  item.get('fiat_fee', ''),
+                                  item['date']])
+
+                assets = rvn_value.assets
+                for asset, val in assets.items():
+                    lines.append([item['txid'],
+                                  item.get('label', ''),
+                                  item['confirmations'],
+                                  val,
+                                  asset,
+                                  '',
+                                  '',
+                                  '',
+                                  item['date']])
+
         with open(file_name, "w+", encoding='utf-8') as f:
             if is_csv:
                 import csv
@@ -1124,6 +1143,7 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
                                       "label",
                                       "confirmations",
                                       "value",
+                                      "asset",
                                       "fiat_value",
                                       "fee",
                                       "fiat_fee",
