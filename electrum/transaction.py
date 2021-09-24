@@ -1101,22 +1101,13 @@ class Transaction:
         return script
 
     @classmethod
-    def serialize_input(self, txin: TxInput, script: str, sighash: int=SIGHASH_ALL, own: bool=True) -> str:
-        if sighash == SIGHASH_ANYONECANPAY:
-            own = True
+    def serialize_input(self, txin: TxInput, script: str) -> str:
         # Prev hash and index
         s = txin.prevout.serialize_to_network().hex()
         # Script length, script, sequence
         s += var_int(len(script)//2)
-        if own:
-            s += script
-        else:
-            s += ""
-
-        if not own and (sighash == SIGHASH_SINGLE or sighash == SIGHASH_NONE):
-            s += int_to_hex(0, 4)
-        else:
-            s += int_to_hex(txin.nsequence, 4)
+        s += script
+        s += int_to_hex(txin.nsequence, 4)
         return s
 
     def _calc_bip143_shared_txdigest_fields(self) -> BIP143SharedTxDigestFields:
@@ -2106,7 +2097,7 @@ class PartialTransaction(Transaction):
 
     @classmethod
     def from_io(cls, inputs: Sequence[PartialTxInput], outputs: Sequence[PartialTxOutput], *, wallet = None,
-                locktime: int = None, version: int = None, bip69_sort:bool=False):
+                locktime: int = None, version: int = None):
         self = cls()
         self._inputs = list(inputs)
         self._outputs = list(outputs)
@@ -2115,8 +2106,7 @@ class PartialTransaction(Transaction):
             self.locktime = locktime
         if version is not None:
             self.version = version
-        if bip69_sort:
-            self.BIP69_sort()
+        self.BIP69_sort()
         return self
 
     def _serialize_psbt(self, fd) -> None:
@@ -2162,7 +2152,7 @@ class PartialTransaction(Transaction):
             txout.combine_with_other_txout(other_txout)
         self.invalidate_ser_cache()
 
-    def join_with_other_psbt(self, other_tx: 'PartialTransaction', bip69_sort: bool=True) -> None:
+    def join_with_other_psbt(self, other_tx: 'PartialTransaction') -> None:
         """Adds inputs and outputs from other_tx into this one."""
         if not isinstance(other_tx, PartialTransaction):
             raise Exception('Can only join partial transactions.')
@@ -2178,8 +2168,8 @@ class PartialTransaction(Transaction):
         self.xpubs.update(other_tx.xpubs)
         self._unknown.update(other_tx._unknown)
         # copy and add inputs and outputs
-        self.add_inputs(list(other_tx.inputs()), bip69_sort=bip69_sort)
-        self.add_outputs(list(other_tx.outputs()), bip69_sort=bip69_sort)
+        self.add_inputs(list(other_tx.inputs()))
+        self.add_outputs(list(other_tx.outputs()))
         self.remove_signatures()
         self.invalidate_ser_cache()
 
@@ -2189,16 +2179,14 @@ class PartialTransaction(Transaction):
     def outputs(self) -> Sequence[PartialTxOutput]:
         return self._outputs
 
-    def add_inputs(self, inputs: List[PartialTxInput], bip69_sort: bool=True) -> None:
+    def add_inputs(self, inputs: List[PartialTxInput]) -> None:
         self._inputs.extend(inputs)
-        if bip69_sort:
-            self.BIP69_sort(outputs=False)
+        self.BIP69_sort(outputs=False)
         self.invalidate_ser_cache()
 
-    def add_outputs(self, outputs: List[PartialTxOutput], bip69_sort: bool=True) -> None:
+    def add_outputs(self, outputs: List[PartialTxOutput]) -> None:
         self._outputs.extend(outputs)
-        if bip69_sort:
-            self.BIP69_sort(inputs=False)
+        self.BIP69_sort(inputs=False)
         self.invalidate_ser_cache()
 
     def set_rbf(self, rbf: bool) -> None:
@@ -2299,7 +2287,7 @@ class PartialTransaction(Transaction):
             #nSequence = int_to_hex(txin.nsequence, 4)
             #preimage = nVersion + hashPrevouts + hashSequence + outpoint + scriptCode + amount + nSequence + hashOutputs + nLocktime + nHashType
         else:
-            txins = var_int(len(inputs)) + ''.join(self.serialize_input(txin, preimage_script, sighash, txin_index==k)
+            txins = var_int(len(inputs)) + ''.join(self.serialize_input(txin, preimage_script if txin_index==k else '')
                                                    for k, txin in enumerate(inputs))
             txouts = var_int(len(outputs)) + ''.join(o.serialize_to_network().hex() for o in outputs)
             preimage = nVersion + txins + txouts + nLocktime + nHashType
@@ -2495,118 +2483,6 @@ class PartialTransaction(Transaction):
         for txin in self.inputs():
             if txin.script_type in ('unknown', 'address'):
                 txin.set_script_type()
-
-class SwapTransaction():
-    in_type: str
-    out_type: str
-    in_quantity: Satoshis
-    out_qunatity: Satoshis
-    trade_type: str
-    out_destination: str
-    signed_partial: Transaction
-    
-    swap_input_data: TxOutput
-    swap_input: PartialTxInput
-    swap_output: PartialTxOutput
-
-    def __init__(self):
-        return
-
-    @property
-    def asset(self):
-        return self.in_type if self.trade_type == "sell" else self.out_type
-
-    @property
-    def currency(self):
-        return self.out_type if self.trade_type == "sell" else self.in_type
-
-    @property
-    def quantity(self):
-        return self.in_quantity if self.trade_type == "sell" else self.out_quantity
-
-    @property
-    def total_price(self):
-        return self.out_quantity if self.trade_type == "sell" else self.in_quantity
-
-    @property
-    def unit_price(self):
-        return self.total_price * COIN // self.quantity
-
-    def finalize_transaction(self):
-        print(finalize)
-
-    @classmethod
-    async def parse_from_hex(cls, hex, wallet):
-        final = SwapTransaction()
-        try:
-            final.signed_partial = tx_from_any(hex)
-        except (SerializationError, ValueError):
-            raise BufferError("Invalid transaction format")
-        if not final.signed_partial:
-            raise BufferError("Invalid Transaction")
-
-        if len(final.signed_partial.inputs()) != 1 or len(final.signed_partial.outputs()) != 1:
-            raise BufferError("Invalid Transaction. Has more than one vin/vout")
-
-        #Mutable tx for the purpose of testing signature
-        tx = PartialTransaction.from_tx(final.signed_partial)
-
-        swap_vin = tx.inputs()[0]
-        swap_vout = tx.outputs()[0]
-
-        swap_vin.combine_with_other_txin(final.signed_partial.inputs()[0])
-
-        final.swap_input = swap_vin
-        final.swap_output = swap_vout
-
-        #TODO: This doesn't actually check for SINGLE|ANYONECANPAY, since the transaction libraries dont currently parse that.
-        if not swap_vin.is_complete():
-            raise BufferError("Transaction not signed with SINGLE|ANYONECANPAY")
-
-        txid = swap_vin.prevout.txid.hex()
-
-        vin_raw = await wallet.network.get_transaction(txid)
-        if vin_raw:
-            vin_tx = Transaction(vin_raw)
-
-        #If nothing comes back this is likely spent, or a testnet tx on mainnet of vice-versa
-        if not vin_tx:
-            raise BufferError("Unable to find transaction.\nIs this for the correct network?")
-
-        test_vout = vin_tx.outputs()[swap_vin.prevout.out_idx]
-        final.swap_input_data = test_vout
-        
-        swap_vin.block_height = 0 #cheat here to make coin chooser accept this later
-        swap_vin.witness_utxo = test_vout
-
-        #TODO: This doesn't properly check if the UTXO is spent or not. we need gettxout for that
-        if not test_vout:
-            raise BufferError("Unable to find UTXO, this transaction may have been executed already.")
-
-        src_vout = vin_tx.outputs()[swap_vin.prevout.out_idx]
-        in_asset = src_vout.asset is not None
-        out_asset = swap_vout.asset is not None
-
-        if in_asset and out_asset:
-            final.trade_type = "trade"
-        elif in_asset:
-            final.trade_type = "sell"
-        elif out_asset:
-            final.trade_type = "buy"
-        else:
-            raise BufferError("Uknonwn trade type")
-
-        final.in_type = src_vout.asset if in_asset else "rvn"
-        final.in_quantity = src_vout.value
-        final.out_type = swap_vout.asset if out_asset else "rvn"
-        final.out_quantity = swap_vout.value
-        final.out_destination = swap_vout.address
-
-        return final
-
-    def __repr__(self):
-        return 'Atomic Swap Partial(InType: {}, InQuant: {} OutType: {}, OutQuant: {}. Type: {})'\
-            .format(self.in_type, self.in_quantity, self.out_type, self.out_quantity, self.trade_type)
 
 def pack_bip32_root_fingerprint_and_int_path(xfp: bytes, path: Sequence[int]) -> bytes:
     if len(xfp) != 4:
