@@ -172,12 +172,7 @@ class PayToEdit(CompletionTextEdit, ScanQRTextEdit, Logger):
             # try LN invoice
             bolt11_invoice = maybe_extract_bolt11_invoice(data)
             if bolt11_invoice is not None:
-                try:
-                    self.win.parse_lightning_invoice(bolt11_invoice)
-                except LnDecodeException as e:
-                    self.errors.append(PayToLineError(line_content=data, exc=e))
-                else:
-                    self.lightning_invoice = bolt11_invoice
+                self.win.set_ln_invoice(bolt11_invoice)
                 return
             # try "address, amount" on-chain format
             try:
@@ -247,6 +242,9 @@ class PayToEdit(CompletionTextEdit, ScanQRTextEdit, Logger):
                 amount = Satoshis(self.amount_edit.get_amount())
             if asset:
                 script = assets.create_transfer_asset_script(script, asset, amount)
+            if amount == 0:
+                self.errors.append(PayToLineError('The amount cannot be 0.', None))
+                return []
             self.outputs = [PartialTxOutput(scriptpubkey=script, value=amount, asset=asset, is_max=is_max)]
 
         return self.outputs[:]

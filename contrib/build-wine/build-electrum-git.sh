@@ -2,7 +2,7 @@
 
 NAME_ROOT=electrum-ravencoin
 
-export PYTHONDONTWRITEBYTECODE=1
+export PYTHONDONTWRITEBYTECODE=1  # don't create __pycache__/ folders with .pyc files
 
 
 # Let's begin!
@@ -33,8 +33,6 @@ popd
 
 find -exec touch -d '2000-11-11T11:11:11+00:00' {} +
 popd
-
-printenv
 
 # Install frozen dependencies
 $WINE_PYTHON -m pip install --no-dependencies --no-warn-script-location \

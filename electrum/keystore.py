@@ -309,7 +309,7 @@ class Deterministic_KeyStore(Software_KeyStore):
         return bool(self.seed)
 
     def get_seed_type(self) -> Optional[str]:
-        return self._seed_type
+        return self._seed_type + ' electrum' if self._seed_type else 'BIP39'
 
     def is_watching_only(self):
         return not self.has_seed()
@@ -323,6 +323,11 @@ class Deterministic_KeyStore(Software_KeyStore):
             raise Exception("a seed exists")
         self.seed = self.format_seed(seed)
         self._seed_type = seed_type(seed) or None
+
+    def add_passphrase(self, passphrase):
+        if self.passphrase:
+            raise Exception("a passphrase exists")
+        self.passphrase = passphrase
 
     def get_seed(self, password):
         if not self.has_seed():
@@ -606,11 +611,15 @@ class BIP32_KeyStore(Xpub, Deterministic_KeyStore):
         self.xprv = xprv
         self.add_xpub(bip32.xpub_from_xprv(xprv))
 
-    def add_xprv_from_seed(self, bip32_seed, xtype, derivation):
+    def add_xprv_from_seed(self, bip32_seed, xtype, derivation, *, seed=None, passphrase=None):
         rootnode = BIP32Node.from_rootseed(bip32_seed, xtype=xtype)
         node = rootnode.subkey_at_private_derivation(derivation)
         self.add_xprv(node.to_xprv())
         self.add_key_origin_from_root_node(derivation_prefix=derivation, root_node=rootnode)
+        if seed:
+            Deterministic_KeyStore.add_seed(self, seed)
+        if passphrase:
+            Deterministic_KeyStore.add_passphrase(self, passphrase)
 
     def get_private_key(self, sequence: Sequence[int], password):
         xprv = self.get_master_private_key(password)
@@ -624,7 +633,7 @@ class BIP32_KeyStore(Xpub, Deterministic_KeyStore):
         return cK, k
 
     def can_have_deterministic_lightning_xprv(self):
-        if (self.get_seed_type() == 'segwit'
+        if (self._seed_type == 'segwit'
                 and self.get_bip32_node_for_xpub().xtype == 'p2wpkh'):
             return True
         return False
@@ -911,11 +920,11 @@ def bip39_is_checksum_valid(
     return checksum == calculated_checksum, True
 
 
-def from_bip43_rootseed(root_seed, derivation, xtype=None):
+def from_bip43_rootseed(root_seed, derivation, xtype=None, *, seed=None, passphrase=None):
     k = BIP32_KeyStore({})
     if xtype is None:
         xtype = xtype_from_derivation(derivation)
-    k.add_xprv_from_seed(root_seed, xtype, derivation)
+    k.add_xprv_from_seed(root_seed, xtype, derivation, seed=seed, passphrase=passphrase)
     return k
 
 

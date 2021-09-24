@@ -21,20 +21,32 @@ Getting started
 
 Contact us on `Discord`_!
 
-Interested in a pre-built binary? Find them `here`_. Otherwise, continue reading.
+Want to use Ledger? Make sure ledger live is closed.
 
 Want to mine to hardware? See this `article`_. Trezor has similar problems. It is recommended that you set up a software wallet and mine to that, then send to your hardware from there.
 
+Interested in a pre-built binary? Find them `here`_. Otherwise, continue reading.
+
+Electrum Ravencoin is currently only supported for Qt-based software.
+
 The master branch is not always guaranteed to be working as expected. If you would like to build from source or run raw python, please use the source from one of our `releases`_.
 
+Learn how to run your own `ElectrumX Server`_.
 
 Electrum itself is pure Python, and so are most of the required dependencies,
 but not everything. The following sections describe how to run from source, but here
 is a TL;DR::
 
+    sudo apt-get install python3
+    sudo apt-get install python3-pip
+    sudo apt-get install python3-cryptography
+    sudo apt-get install python3-pyqt5
     sudo apt-get install libsecp256k1-0
-    python3 -m pip install --user .[gui,crypto]
-
+    sudo apt-get install cmake
+    sudo pip3 install virtualenv
+    ./electrum-env
+    
+If you get a protobuf _internal_create_key error, run sudo pip install --upgrade protobuf
 
 Not pure-python dependencies
 ----------------------------
@@ -67,8 +79,9 @@ If you would like hardware wallet support, see `this`_.
 .. _this: https://github.com/spesmilo/electrum-docs/blob/master/hardware-linux.rst
 .. _here: https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases
 .. _Discord: https://discord.gg/VuubYncHz4
-.. _article: https://support.ledger.com/hc/en-us/articles/115005165209-Receive-mining-proceeds
+.. _article: https://support.ledger.com/hc/en-us/articles/360018969814-Receive-mining-proceeds?docs=true
 .. _releases: https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases
+.. _`ElectrumX Server`: https://github.com/Electrum-RVN-SIG/electrumx-ravencoin
 
 Running from tar.gz
 -------------------
@@ -156,12 +169,9 @@ Any help testing the software, reporting or fixing bugs, reviewing pull requests
 and recent changes, writing tests, or helping with outstanding issues is very welcome.
 Implementing new features, or improving/refactoring the codebase, is of course
 also welcome, but to avoid wasted effort, especially for larger changes,
-we encourage discussing these on the issue tracker or IRC first.
+we encourage discussing these on the discord first.
 
-Besides `GitHub`_, most communication about Electrum development happens on IRC, in the
-:code:`#electrum` channel on Libera Chat. The easiest way to participate on IRC is
-with the web client, `web.libera.chat`_.
+Besides `GitHub`_, most communication about Electrum development happens on discord, in the
+:code:`#electrum-rvn-sig` channel on discord.
 
-
-.. _web.libera.chat: https://web.libera.chat/#electrum
-.. _GitHub: https://github.com/spesmilo/electrum
+.. _GitHub: https://github.com/Electrum-RVN-SIG/electrum-ravencoin
