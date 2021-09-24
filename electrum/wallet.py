@@ -1552,7 +1552,7 @@ class Abstract_Wallet(AddressSynchronizer, ABC):
         coin_chooser = coinchooser.get_coin_chooser(self.config)
         
         # change address. if empty, coin_chooser will set it
-        change_addrs = self.get_change_addresses_for_new_transaction(change_addr, allow_reuse=False, extra_addresses=extra_addresses)
+        change_addrs = self.get_change_addresses_for_new_transaction(change_addr, allow_reusing_used_change_addrs=False, extra_addresses=extra_addresses)
 
         asset_divs = {asset: self.get_asset_meta(asset).divisions
                     for asset in assets}

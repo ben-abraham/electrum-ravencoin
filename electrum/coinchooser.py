@@ -325,7 +325,7 @@ class CoinChooserBase(Logger):
                                             asset_divs: Dict[str, int],
                                             has_return: bool) -> Tuple[PartialTransaction, List[PartialTxOutput]]:
         # make a copy of base_tx so it won't get mutated
-        tx = PartialTransaction.from_io(base_tx.inputs()[:], base_tx.outputs()[:], wallet=wallet)
+        tx = PartialTransaction.from_io(base_tx.inputs()[:], base_tx.outputs()[:], wallet=wallet, bip69_sort=bip69_sort)
 
         tx.add_inputs([coin for b in buckets for coin in b.coins], bip69_sort=bip69_sort)
         tx_weight = self._get_tx_weight(buckets, base_weight=base_weight)

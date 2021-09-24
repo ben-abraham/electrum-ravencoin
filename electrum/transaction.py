@@ -1101,13 +1101,22 @@ class Transaction:
         return script
 
     @classmethod
-    def serialize_input(self, txin: TxInput, script: str) -> str:
+    def serialize_input(self, txin: TxInput, script: str, sighash: int=SIGHASH_ALL, own: bool=True) -> str:
+        if sighash == SIGHASH_ANYONECANPAY:
+            own = True
         # Prev hash and index
         s = txin.prevout.serialize_to_network().hex()
         # Script length, script, sequence
         s += var_int(len(script)//2)
-        s += script
-        s += int_to_hex(txin.nsequence, 4)
+        if own:
+            s += script
+        else:
+            s += ""
+
+        if not own and (sighash == SIGHASH_SINGLE or sighash == SIGHASH_NONE):
+            s += int_to_hex(0, 4)
+        else:
+            s += int_to_hex(txin.nsequence, 4)
         return s
 
     def _calc_bip143_shared_txdigest_fields(self) -> BIP143SharedTxDigestFields:
@@ -2097,7 +2106,7 @@ class PartialTransaction(Transaction):
 
     @classmethod
     def from_io(cls, inputs: Sequence[PartialTxInput], outputs: Sequence[PartialTxOutput], *, wallet = None,
-                locktime: int = None, version: int = None):
+                locktime: int = None, version: int = None, bip69_sort:bool=False):
         self = cls()
         self._inputs = list(inputs)
         self._outputs = list(outputs)
@@ -2106,7 +2115,8 @@ class PartialTransaction(Transaction):
             self.locktime = locktime
         if version is not None:
             self.version = version
-        self.BIP69_sort()
+        if bip69_sort:
+            self.BIP69_sort()
         return self
 
     def _serialize_psbt(self, fd) -> None:
@@ -2289,7 +2299,7 @@ class PartialTransaction(Transaction):
             #nSequence = int_to_hex(txin.nsequence, 4)
             #preimage = nVersion + hashPrevouts + hashSequence + outpoint + scriptCode + amount + nSequence + hashOutputs + nLocktime + nHashType
         else:
-            txins = var_int(len(inputs)) + ''.join(self.serialize_input(txin, preimage_script if txin_index==k else '')
+            txins = var_int(len(inputs)) + ''.join(self.serialize_input(txin, preimage_script, sighash, txin_index==k)
                                                    for k, txin in enumerate(inputs))
             txouts = var_int(len(outputs)) + ''.join(o.serialize_to_network().hex() for o in outputs)
             preimage = nVersion + txins + txouts + nLocktime + nHashType
